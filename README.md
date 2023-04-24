@@ -18,6 +18,7 @@ The repository is organized into the following folder tree, which contains all t
 * **04_clustering_annotation** -->
 * **05_GEX_analysis** -->
 * **ACLF_figures** -->
+* **bin** -->
 
 
 ## Data accessibility
