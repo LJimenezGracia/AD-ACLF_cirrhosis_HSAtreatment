@@ -1,0 +1,268 @@
+---
+title: "Figure3: Bcells"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+
+## Objective
+In this Rmarkdown document, we are going to 
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(gt)
+library(grid)
+library(RColorBrewer)
+library(parallelDist)
+library(scales)
+library(gtable)
+library(ggpubr)
+library(rstatix)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_r_objects <- here::here("04_clustering_annotation/results/R_objects")
+path_r_figs_out <- here::here("ACLF_figures/figs")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Parameters
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade", "gender")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease", "Gender")
+
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "pct_mt", "pct_rb", "S.Score", "G2M.Score")
+
+palette_color_cells <- c("Naive B cells" = "#8ecae6",
+                         "Activated Naive B cells" = "#023047",
+                         "Transitional 1 B cells" = "#ffb703",
+                         "Transitional 2 B cells" = "#fb8500",
+                         "Unswitched Memory B cells" = "#cfe1b9",
+                         "Switched Memory B cells" = "#72B01D",
+                         "CD19hiCD11c+ Memory B cells" = "#3f7d20",
+                         "Activated B cells" = "#4c5760",
+                         "Plasma cells" = "#6b4e71",
+                         "Plasma cells cycling" = "#E56B6F")
+
+palette_color_treatment <- c("HSA" = "#ee6c4d",
+                             "vehicle" = "#3d5a80")
+
+palette_color_disease <- c("AD" = "#ffe1a8",
+                               "ACLFg1" = "#E26D5C",
+                               "ACLFg2" = "#822121",
+                               "ACLFg3" = "#723d46",
+                               "Healthy" = "#99EDC3")
+```
+
+## Load metadata
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+
+# Merging metadata_all tables
+metadata <- metadata %>% filter(type == "cDNA")
+
+print("Libraries metadata")
+DT::datatable(metadata, options = list(scrollX = TRUE))
+```
+
+
+```{r}
+# Load Seurat object
+seurat_obj <- readRDS(here::here("04_clustering_annotation/results/R_objects/CLARIAJOA_Blymphocytes_clustering_level3_annotation_cleaned_subset.rds"))
+seurat_obj
+
+# Subsetting data
+seurat_obj$disease_global <- as.character(seurat_obj$disease)
+seurat_obj$disease_global[seurat_obj$disease_global == "ACLF"] <- "AD"
+seurat_obj$disease_global <- as.factor(seurat_obj$disease_global)
+seurat_obj$diseaseG_treat <- as.factor(as.character(paste0(seurat_obj$disease_global , "_", seurat_obj$treatment)))
+
+Idents(seurat_obj) <- "annot_level3"
+
+# Reorder factors
+seurat_obj$annot_level3 <- factor(x = seurat_obj$annot_level3,
+                                    levels = c("Naive B cells",
+                                               "Activated Naive B cells",    
+                                               "Transitional 1 B cells",
+                                               "Transitional 2 B cells",
+                                               "Activated B cells",
+                                               "Unswitched Memory B cells",
+                                               "Switched Memory B cells",
+                                               "CD19hiCD11c+ Memory B cells",
+                                               "Plasma cells",
+                                               "Plasma cells cycling"
+                                               ))
+```
+
+```{r fig.width=12, fig.height=5}
+genes_of_interest <- c("CD79A",	"CD79B",	"MS4A1",
+                       "IGHD",	"IGHM",	"SELL",	"CCR7", # Naive B cells
+                       "HSPA1A",	"CCR7", # Activated Naive B cells
+                       "TCL1A",	"VPREB3",	"FCRL5", # Transitional 1 B cells
+                       "CD55",	"CD37",	"CXCR4", # Transitional 2 B cells
+                       "CD69",	"CD83", "MYC",	"HLA-DQA1", # Activated B cells
+                       "LTB",	"TNFRSF13B", # Unswitched
+                       "CD27",	"S100A10",	"SSPN", # Switched Memory B cells
+                       "CD19", "ITGAX",	"HLA-DPA1", # CD19hiCD11c+ Memory B cells
+                       "CD38",	"JCHAIN", "IGHG1",	"XBP1", # Plasma cells
+                       "STMN1",	"TOP2A", "MKI67" # Cycling
+                       )
+
+genes_of_interest <- unique(genes_of_interest)
+
+DotPlot(seurat_obj,
+        features = genes_of_interest,
+        group.by = "annot_level3",
+        scale = TRUE,
+        #col.max = 3,
+        #col.min = 0,
+        cols = "RdYlBu",
+        dot.scale = 6) +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.position = "right")
+
+ggsave(paste0(path_r_figs_out, "/FigSupp1_BLymphMarkers_dotplot.svg"),
+       width = 12, height = 5,
+       dpi = 300)
+```
+
+
+```{r fig.width=16, fig.height=12}
+genes_of_interest <- c("CD79A",	"CD79B",	"MS4A1",
+                       "IGHD",	"IGHM",	"SELL",	"CCR7", # Naive B cells
+                       "HSPA1A",	"CCR7", # Activated Naive B cells
+                       "TCL1A",	"VPREB3",	"FCRL5", # Transitional 1 B cells
+                       "CD55",	"CD37",	"CXCR4", # Transitional 2 B cells
+                       "CD69",	"CD83", "MYC",	"HLA-DQA1", # Activated B cells
+                       "LTB",	"TNFRSF13B", # Unswitched
+                       "CD27",	"S100A10",	"SSPN", # Switched Memory B cells
+                       "CD19", "ITGAX",	"HLA-DPA1", # CD19hiCD11c+ Memory B cells
+                       "CD38",	"JCHAIN", "IGHG1",	"XBP1", # Plasma cells
+                       "STMN1",	"TOP2A", "MKI67" # Cycling
+                       )
+
+genes_of_interest <- unique(genes_of_interest)
+
+DotPlot(seurat_obj,
+        features = genes_of_interest,
+        group.by = "annot_level3",
+        split.by = "diseaseG_treat",
+        scale = TRUE,
+        #col.max = 3,
+        #col.min = 0,
+        cols = "RdYlBu",
+        dot.scale = 8) +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust = 0.5),
+        axis.title = element_blank(),
+        legend.position = "bottom")
+
+ggsave(paste0(path_r_figs_out, "/FigSupp1_BLymphMarkers_dotplot_bycond.svg"),
+       width = 16, height = 12,
+       dpi = 300)
+```
+
+
+# Plot HSV vs vehicle
+
+```{r}
+seurat_obj_metadata <- seurat_obj@meta.data
+
+subset <- seurat_obj_metadata %>% 
+    select(c("disease_grade_treatment_patient", "annot_level3")) %>% 
+    dplyr::count(annot_level3, disease_grade_treatment_patient) %>% # only computing number of cells, not percentages
+  reshape2::dcast(disease_grade_treatment_patient ~ annot_level3) %>% # change rows to columns
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>% # replacing NA by 0
+  gather(key = "annot_level3", value = "n", `Naive B cells`:`Plasma cells cycling`)
+
+celltype_prop_df_metadata <- seurat_obj_metadata %>% 
+  select(c("disease_grade_treatment_patient", "disease", "disease_grade", "disease_treatment", "disease_treatment_patient",
+           "patient", "age", "gender", "treatment")) %>% unique()
+
+subset <- merge(subset, celltype_prop_df_metadata, by="disease_grade_treatment_patient")
+
+subset <- subset %>% 
+  group_by(disease_treatment_patient) %>%
+  mutate(pct = n / sum(n)*100)
+
+subset$treatment <- factor(x = subset$treatment, levels = c("vehicle", "HSA"))
+seurat_obj$annot_level3 <- factor(x = seurat_obj$annot_level3,
+                                    levels = c("Naive B cells",
+                                               "Activated Naive B cells",    
+                                               "Transitional 1 B cells",
+                                               "Transitional 2 B cells",
+                                               "Unswitched Memory B cells",
+                                               "Switched Memory B cells",
+                                               "CD19hiCD11c+ Memory B cells",
+                                               "Activated B cells",
+                                               "Plasma cells",
+                                               "Plasma cells cycling"
+                                               ))
+head(subset)
+```
+
+
+```{r}
+mycomparisons <- list(c("HSA", "vehicle"))
+
+# Computing significance
+stat.test <- subset %>%
+  group_by(annot_level3) %>%
+  wilcox_test(pct ~ treatment, comparisons = mycomparisons, paired = TRUE, alternative = "two.sided") %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+stat.test <- stat.test %>% add_xy_position()
+stat.test
+```
+
+```{r fig.width=18, fig.height=10}
+gg <- subset %>% 
+  ggboxplot(x="treatment", y="pct", fill="treatment", alpha=0.5, outlier.shape = NA,) + 
+  geom_jitter(width=0, size=4, alpha=0.8, aes(color=disease_grade)) +
+  geom_line(aes(group=patient), position = position_dodge(0), color = "darkgrey") +
+  #geom_point(aes(group=disease_treatment_patient), size=3, position = position_dodge(0.2)) +
+  facet_wrap(annot_level3 ~ ., scales = "free", ncol = 5) +
+  labs(title = "", x = "", y = "Percentage B Lymphocytes (%)") +
+  stat_pvalue_manual(stat.test, tip.length = 0.01, label = "{scales::pvalue(p.adj)}") +
+  scale_fill_manual(values = palette_color_treatment) +
+  scale_color_manual(values=palette_color_disease) +
+  theme_bw() + 
+  theme(strip.text = element_text(size = 16),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=18),
+        legend.text = element_text(size=14),
+        legend.position = "bottom") +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1)))
+print(gg)
+
+
+ggsave(paste0(path_r_figs_out, "/FigSupp_Bcells_Abundance_disease-healthy.svg"),
+       width = 18, height = 10,
+       dpi = 300)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

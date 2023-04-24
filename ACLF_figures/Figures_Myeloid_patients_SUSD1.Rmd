@@ -1,0 +1,384 @@
+---
+title: "Myeloid cells with SUSD1"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+
+## Objective
+In this Rmarkdown document, we are going to 
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(gt)
+library(grid)
+library(RColorBrewer)
+library(parallelDist)
+library(scales)
+library(gtable)
+library(ggpubr)
+library(rstatix)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_project_clinical <- here::here("01_cellranger_mapping/data/CLARIAJOA_samplesdata_clinical.xlsx")
+path_r_objects <- here::here("04_clustering_annotation/results/R_objects")
+path_r_figs_out <- here::here("ACLF_figures/figs")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Parameters
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade", "gender")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease", "Gender")
+
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "pct_mt", "pct_rb", "S.Score", "G2M.Score")
+
+palette_color_cells <- c("Classical Monocytes" = "#6b4e71",
+                         "Intermediate Monocytes HAVCR2+" = "#8ecae6",
+                         "Intermediate Monocytes IFN+" = "#023047",
+                         "Intermediate Monocytes Inflammatory" = "#4c5760",
+                         "Intermediate Monocytes Activated" = "#40798c",
+                         "Non-Classical Monocytes" = "#E56B6F",
+                         "Macrophages-like Monocytes" = "#e4c1f9",
+                         "DC2" = "#ffb703",
+                         "DC4 FCGR3B+" = "#fb8500",
+                         "pDCs" = "#ef233c",
+                         "G-MDSC" = "#cfe1b9",
+                         "G-MDSC CST7+" = "#3f7d20",
+                         "GMP cells" = "#d4a373"
+)
+
+palette_color_treatment <- c("HSA" = "#ee6c4d",
+                             "vehicle" = "#3d5a80")
+
+palette_color_disease <- c("AD" = "#ffe1a8",
+                               "ACLFg1" = "#E26D5C",
+                               "ACLFg2" = "#822121",
+                               "ACLFg3" = "#723d46",
+                               "Healthy" = "#99EDC3")
+
+palette_color_renalfunction <- c("Healthy" = "#3DED97",
+                                 "No Renal D/F" = "#FF8A8A",
+                                 "Renal D/F" = "#9B111E")
+```
+
+## Load metadata
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+
+# Merging metadata_all tables
+metadata <- metadata %>% filter(type == "cDNA")
+
+print("Libraries metadata")
+DT::datatable(metadata, options = list(scrollX = TRUE))
+
+# Clinical metadata
+clinical_metadata <- openxlsx::read.xlsx(path_project_clinical)
+print("Clinical metadata")
+DT::datatable(clinical_metadata, options = list(scrollX = TRUE))
+```
+
+## Load data
+```{r}
+# Load Seurat object
+seurat_obj <- readRDS(here::here("04_clustering_annotation/results/R_objects/CLARIAJOA_myeloidcells_clustering_level3_annotation_cleaned_subset.rds"))
+seurat_obj
+
+# Subsetting data only PATIENTS, removing HC
+Idents(seurat_obj) <- "disease"
+Idents(seurat_obj) <- "annot_level3"
+
+# Reorder factors
+seurat_obj$annot_level3 <- factor(x = seurat_obj$annot_level3,
+                                    levels = c("Classical Monocytes",
+                                               "Intermediate Monocytes Activated",
+                                               "Intermediate Monocytes HAVCR2+",
+                                               "Intermediate Monocytes Inflammatory",
+                                               "Intermediate Monocytes IFN+",
+                                               "Non-Classical Monocytes",
+                                               "Macrophages-like Monocytes",
+                                               "DC2",
+                                               "DC4 FCGR3B+",
+                                               "pDCs",     
+                                               "G-MDSC",
+                                               "G-MDSC CST7+",
+                                               "GMP cells"
+                                               ))
+
+# Merge clinical data with seurat object
+clinical_metadata <- clinical_metadata[, !colnames(clinical_metadata) %in% c("ID", "ACLF.grade", "ACLF_yesno")]
+
+seurat_obj_metadata <- left_join(seurat_obj@meta.data, clinical_metadata, by = "patient")
+rownames(seurat_obj_metadata) <- rownames(seurat_obj@meta.data)
+seurat_obj@meta.data <- seurat_obj_metadata
+
+
+# Subset untreated
+seurat_obj <- subset(seurat_obj, subset = treatment == "vehicle")
+
+# New variable
+seurat_obj$disease_general <- as.character(seurat_obj$disease)
+seurat_obj$disease_general[seurat_obj$disease == "AD"] <- "Decompensation"
+seurat_obj$disease_general[seurat_obj$disease == "ACLF"] <- "Decompensation"
+seurat_obj$disease_general <- as.factor(seurat_obj$disease_general)
+
+# Subset only patients
+seurat_obj_sub <- subset(seurat_obj, subset = disease %in% c("AD", "ACLF"))
+```
+
+
+```{r}
+table(seurat_obj$annot_level3, seurat_obj$disease)
+```
+
+
+## SUSD1
+```{r fig.width=8, fig.height=7}
+DotPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "disease_general", cols = "RdBu")
+```
+
+```{r fig.width=12, fig.height=5}
+VlnPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "disease_general") &
+  stat_compare_means(method = "wilcox", ref.group = "Healthy")
+```
+
+
+## SUSD1 by clinical condition
+```{r}
+clinical_conditions <- c("Liver.subscore", 
+                         "Kidney.subscore",
+                         "Coagulation.subscore",
+                         "Circulation.subscore",
+                         "Lung.subscore", 
+                         "Cerebral.subscore")
+
+
+# Replace missing values with "Healthy" for each variable column with missing information
+for (col in clinical_conditions) {
+  seurat_obj@meta.data[[col]][is.na(seurat_obj@meta.data[[col]])] <- "Healthy"
+}
+```
+
+
+```{r fig.width=12, fig.height=5}
+pdf("figs/CLARIAJOA_Myeloid_SUSD1_byclinicalcond.pdf", width = 12, height = 5, onefile = TRUE)
+for (cond in clinical_conditions) {
+  gg <- VlnPlot(seurat_obj, 
+        features = "SUSD1", 
+        group.by = cond, 
+        split.by = "annot_level3") +
+    scale_fill_manual(values = palette_color_cells) +
+    labs(x = cond)
+  print(gg)
+}
+
+dev.off()
+```
+
+
+```{r fig.width=12, fig.height=5}
+pdf("figs/CLARIAJOA_Myeloid_patients_SUSD1_byclinicalcond.pdf", width = 12, height = 5, onefile = TRUE)
+for (cond in clinical_conditions) {
+  gg <- VlnPlot(seurat_obj_sub, 
+        features = "SUSD1", 
+        group.by = cond, 
+        split.by = "annot_level3") +
+    scale_fill_manual(values = palette_color_cells) +
+    labs(x = cond)
+  print(gg)
+}
+dev.off()
+```
+
+
+
+## SUSD1 by manual kidney_function condition
+```{r}
+seurat_obj$kidney_function <- ifelse(seurat_obj$`Creat(mg/dl)` >= 2, "Renal failure",
+                                     ifelse((seurat_obj$`Creat(mg/dl)` < 2 & seurat_obj$`Creat(mg/dl)` >= 1.5 ), "Renal dysfunction", 
+                                            "No Renal dysfunction/failure"))
+                                     
+seurat_obj$kidney_function[seurat_obj$disease == "Healthy"] <- "Healthy"    
+
+table(seurat_obj$kidney_function)
+```
+
+
+```{r fig.width=8, fig.height=9}
+DotPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "kidney_function", cols = "RdBu")
+DotPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "kidney_function", cols = "RdBu", col.max = 1)
+```
+
+```{r fig.width=12, fig.height=5}
+# Create new variable based on cluster level
+pdf("figs/CLARIAJOA_Myeloid_SUSD1_byCreatinine.pdf", width = 12, height = 5, onefile = TRUE)
+
+VlnPlot(seurat_obj, 
+        features = "SUSD1", 
+        group.by = "kidney_function", 
+        split.by = "annot_level3") +
+    scale_fill_manual(values = palette_color_cells) +
+    labs(x = cond)
+
+dev.off()
+```
+
+
+```{r fig.width=12, fig.height=5}
+seurat_obj_sub$kidney_function <- ifelse(seurat_obj_sub$`Creat(mg/dl)` >= 2, "Renal failure",
+                                     ifelse((seurat_obj_sub$`Creat(mg/dl)` < 2 & seurat_obj_sub$`Creat(mg/dl)` >= 1.5 ), "Renal dysfunction", 
+                                            "No Renal dysfunction/failure"))
+table(seurat_obj_sub$kidney_function)
+```
+
+
+```{r fig.width=12, fig.height=5}
+# Create new variable based on cluster level
+pdf("figs/CLARIAJOA_Myeloid_patients_SUSD1_byCreatinine.pdf", width = 12, height = 5, onefile = TRUE)
+
+VlnPlot(seurat_obj_sub, 
+        features = "SUSD1", 
+        group.by = "kidney_function", 
+        split.by = "annot_level3") +
+    scale_fill_manual(values = palette_color_cells) +
+    labs(x = cond)
+
+dev.off()
+```
+
+
+## SUSD1 by manual kidney_function condition simplified
+```{r}
+seurat_obj$kidney_function_simple <- ifelse(seurat_obj$`Creat(mg/dl)` >= 1.5, "Renal D/F", "No Renal D/F")
+seurat_obj$kidney_function_simple[seurat_obj$disease == "Healthy"] <- "Healthy"    
+
+# Remove patient without information -- missing information included
+# seurat_obj <- subset(seurat_obj, subset = donor_id == "ACLF8", invert = TRUE)
+
+# Reorder factors
+seurat_obj$kidney_function_simple <-  factor(x = seurat_obj$kidney_function_simple,
+                                    levels = c("Healthy",
+                                               "No Renal D/F",
+                                               "Renal D/F"))
+table(seurat_obj$kidney_function_simple)
+table(seurat_obj$annot_level3, seurat_obj$kidney_function_simple)
+```
+
+
+```{r fig.width=8, fig.height=7}
+DotPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "kidney_function_simple", cols = "RdBu")
+DotPlot(seurat_obj, features = "SUSD1", group.by = "annot_level3", split.by = "kidney_function_simple", cols = "RdBu", col.max = 1)
+```
+
+```{r fig.width=20, fig.height=6}
+# Create new variable based on cluster level
+VlnPlot(seurat_obj, 
+        features = "SUSD1", 
+        group.by = "annot_level3", 
+        split.by = "kidney_function_simple") &
+    scale_fill_manual(values = palette_color_renalfunction)
+```
+
+
+### Manual plotting for statistics
+```{r}
+vln_df = data.frame(SUSD1 = seurat_obj[["RNA"]]@data["SUSD1", ], 
+                    annot_level3 = seurat_obj$annot_level3,
+                    kidney_function_simple = seurat_obj$kidney_function_simple)
+#noise <- rnorm(n = length(x = vln_df[, "SUSD1"])) / 100000
+#vln_df$SUSD1_noise <- vln_df$SUSD1 + noise
+
+# Reorder factors
+vln_df$kidney_function_simple <-  factor(x = vln_df$kidney_function_simple,
+                                    levels = c("Healthy",
+                                               "No Renal D/F",
+                                               "Renal D/F"))
+vln_df$SUSD1 <- as.numeric(vln_df$SUSD1)
+```
+
+
+```{r}
+mycomparisons <- list(c("No Renal D/F", "Healthy"),
+                      c("Renal D/F", "No Renal D/F"),
+                      c("Renal D/F", "Healthy")
+                      )
+
+# The Wilcoxon test requires at least 3 observations in each group in order to be performed.
+table(vln_df$annot_level3, vln_df$kidney_function_simple)
+vln_df_count <- vln_df %>% 
+  group_by(annot_level3, kidney_function_simple) %>% 
+  summarise(diff_0 = sum(SUSD1 != 0))
+print(vln_df_count)
+# As seen, G-MDSC / G-MDSC CST7+ / GMP cells population does not fulfill, will be excluded.
+
+# Filtering populations
+vln_df <- vln_df %>% 
+  filter(!annot_level3 %in% c("G-MDSC", "G-MDSC CST7+", "GMP cells"))
+
+# Computing significance
+stat.test <- vln_df %>%
+  group_by(annot_level3) %>%
+  wilcox_test(SUSD1 ~ kidney_function_simple, comparisons = mycomparisons, alternative = "two.sided") %>%
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+
+write.table(as.data.frame(stat.test),
+          file = "figs/CLARIAJOA_Myeloid_SUSD1_byCreatinine_simplified_statistics.csv",
+          sep = ",", row.names = FALSE)
+
+stat.test <- stat.test %>% add_xy_position()
+stat.test
+```
+
+
+
+```{r fig.width=20, fig.height=8}
+pdf("figs/CLARIAJOA_Myeloid_SUSD1_byCreatinine_simplified.pdf", width = 20, height = 8, onefile = TRUE)
+
+#  violin plot without noise
+vln_df %>% 
+  ggplot(aes(x = kidney_function_simple, y = SUSD1, fill = kidney_function_simple)) + 
+  geom_violin(adjust =1, trim=TRUE, scale = "width") +
+  facet_wrap(annot_level3 ~ ., scales = "free", ncol = 5) +
+  scale_fill_manual(values = palette_color_renalfunction) +
+  geom_jitter(alpha=0.2) +
+  #stat_pvalue_manual(stat.test, tip.length = 0.01, label = "{scales::pvalue(p.adj)}") +
+  #stat_compare_means(comparisons = mycomparisons, method = "wilcox.test", label = "p.format") +
+  labs(x = "", y = "SUSD1 Expression Levels", fill = "Patient stratification") +
+  theme(strip.text = element_text(size = 15),
+        axis.text = element_text(size=14),
+        axis.title = element_text(size=18),
+        legend.text = element_text(size=14),
+        legend.position = "bottom") +
+  scale_y_continuous(expand = expansion(mult = c(0.15, 0.15)))
+
+dev.off()
+```
+
+
+
+# Session Info
+```{r}
+sessionInfo()
+```
