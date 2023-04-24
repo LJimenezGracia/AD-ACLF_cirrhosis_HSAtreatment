@@ -2,7 +2,7 @@
 
 This is the GitHub repository for the **Innate and Adaptive Immune Cells in Patients with Acutely Decompensated Cirrhosis Treated with Albumin** manuscript.
 
-*This manuscript is currently under review process.*
+*This manuscript is currently under submission process.*
 
 
 ## Abstract
