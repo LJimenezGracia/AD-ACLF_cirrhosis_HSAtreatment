@@ -1,0 +1,230 @@
+---
+title: "Data integration and processing"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+Following with the results obtained in the previous notebook, we will now perform batch-effect correction (data integration). To do so, we will follow the current best practices for scRNA-seq QC described in [Luecken al. Mol Syst Biol (2018)](https://doi.org/10.15252/msb.20188746) and adapt some workflows from [Satija Lab](https://satijalab.org/seurat/vignettes.html).
+
+## Objective
+In this Rmarkdown document, we are going to perform the previous processing steps.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(harmony)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_samples_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata_samples_all.csv")
+path_r_objects <- here::here("03_QC/results/R_objects")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Parameters
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade", "gender")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease", "Gender")
+
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "S.Score", "G2M.Score", "pct_mt", "pct_rb")
+
+# Color palette
+color_palette <- Polychrome::createPalette(25, c("#fc6060", "#74f774", "#7c7cfc"))
+names(color_palette) <- NULL
+#Polychrome::swatch(color_palette)
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** project.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+metadata_samples <- read.csv(path_samples_metadata)
+
+# Merging metadata_all tables
+metadata_all <- left_join(metadata, metadata_samples, by = "patient")
+
+print("Libraries metadata")
+DT::datatable(metadata_all, options = list(scrollX = TRUE))
+
+# Load Seurat object
+seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_alldata_lognorm_processed.rds"))
+seurat_obj
+```
+
+# Integration with harmony
+The integration approach was carried out with [Harmony](https://www.nature.com/articles/s41592-019-0619-0). [Chazarra-Gil *et al*](https://www.biorxiv.org/content/10.1101/2020.05.22.111211v2), which was reported to be among the best scRNA-seq integration methods, especially in terms of scalability, in a recent integration benchmarking study.
+
+```{r}
+seurat_obj_integrated <- seurat_obj %>%
+  RunHarmony(group.by.vars = "gem_id")
+
+# Elbowplot to select relevant PCs to analyse the dataset
+ElbowPlot(seurat_obj_integrated, ndims = 50, reduction = "harmony")
+```
+
+As seen in the previous notebook, we will use the first 20 PCs to visualize data and perform the clustering.
+```{r}
+# Dimensionality reduction
+seurat_obj_integrated <- seurat_obj_integrated %>%
+  RunUMAP(reduction = "harmony", dims = 1:20)
+```
+
+
+## Assessing confounder variables
+```{r fig.width=16, fig.height=15}
+# Visualizing UMAP
+gg_umap_uncorrected <- purrr::map2(confounder_variables, confounder_names,
+                                          function(confounder, title) {
+  p <- DimPlot(seurat_obj_integrated, 
+               reduction = "umap",
+               group.by = confounder,
+               pt.size = 0.01) +
+    labs(title=title) +
+    scale_color_manual(values=color_palette)
+  p
+})
+
+cowplot::plot_grid(plotlist = gg_umap_uncorrected, ncol = 2)
+```
+
+Here, from the UMAP mapping, we cannot see the presence of library-specific effects that should not be present. But, we clearly see treatment/disease differences. Thus, we will integrate the different samples to harmonize these cells.
+
+## Assessing cell cycle effects
+```{r fig.width=7, fig.height=5}
+gg_umap_by_phase <- DimPlot(
+  seurat_obj_integrated,
+  reduction = "umap",
+  group.by = "Phase",
+  pt.size = 0.01) +
+  labs(color = "Cell Cycle Phase")
+
+gg_umap_by_phase
+```
+Finally, we ensure that there is no batch effect associated to the cell cycle phase.
+
+
+## Assessing sources of uninterested variation
+Next we will explore additional metrics, such as the number of UMIs and genes per cell, S-phase and G2M-phase markers, and mitochondrial / ribosomal gene expression on the UMAP embedding.
+
+```{r fig.width=14, fig.height=15}
+gg_qc_umap <- FeaturePlot(
+  seurat_obj_integrated,
+  reduction = "umap",
+  features = qc_metrics,
+  order = TRUE,
+  ncol = 2)
+
+gg_qc_umap
+```
+
+
+Finally, we'll also check for the doublet score and doublet prediction obtained using `scrublet`.
+```{r fig.width=14, fig.height=5}
+gg_doubletscore_umap <- FeaturePlot(
+  seurat_obj_integrated,
+  reduction = "umap",
+  features = "scrublet_doublet_scores",
+    cols = c("lightgray", "darkblue"),
+  order = TRUE)
+
+gg_doubletpred_umap <- DimPlot(
+  seurat_obj_integrated,
+  reduction = "umap",
+  group.by = "scrublet_predicted_doublet")
+
+cowplot::plot_grid(gg_doubletscore_umap,
+                   gg_doubletpred_umap, ncol = 2)
+```
+
+
+## Assessing multiple confounder variables
+```{r fig.width=14, fig.height=5}
+DimPlot(
+  seurat_obj_integrated,
+  group.by = "disease_grade",
+  split.by = "treatment",
+  pt.size = 0.01
+  ) +
+  labs(title = "Treatment",
+       color = "Disease") +
+  scale_color_brewer(palette = "Paired")
+```
+
+```{r fig.width=25, fig.height=5}
+DimPlot(
+  seurat_obj_integrated,
+  group.by = "treatment",
+  split.by = "disease_grade",
+  pt.size = 0.01
+  ) +
+  labs(title = "Disease",
+       color = "Treatment") +
+  scale_color_brewer(palette = "Paired")
+```
+
+
+## Assessing gene markers expression
+```{r fig.width=30, fig.height=15}
+# Immune fraction
+FeaturePlot(seurat_obj_integrated,
+            features = c("PTPRC", # CD45+, immune cells
+                         "CD3D", # T cells
+                         "CD4", "FOXP3", "SELL", "IRF7", "KLRG1", # CD4+ T cells, Treg
+                         "CD8A", "NKG7", # CD8+ T cells, cytotoxic
+                         "KLRD1", "IL7R", # NK cells
+                         "CD79A", # B cells
+                         "MS4A1", "JCHAIN", # Naive vs Plasma cells
+                         "LYZ", "CD14", "FCGR3A", "PLAC8", # Mono/macro
+                         "CLEC9A", "CLEC10A", "FTL", "GZMB", # DCs
+                         "S100A9", # Neutrophils
+                         "CD200R3", # Mast cells
+                         "HLA-DRA" # MHC-antigen presenting
+                         ),
+            order = T,
+            ncol = 6)
+```
+
+# Getting data to evaluate integration
+```{r}
+# Save confounders metadata and PCA coordinates to evaluate integration
+confounders_df <- seurat_obj@meta.data[, confounder_variables]
+saveRDS(confounders_df, file = paste0(path_r_objects, "/CLARIAJOA_confounders.rds"))
+
+# Get embeddings from non-integrated data
+saveRDS(seurat_obj@reductions$pca@cell.embeddings[,1:20],
+        file = paste0(path_r_objects, "/CLARIAJOA_pca_uncorrected.rds"))
+
+# Get embeddings from integrated data
+saveRDS(seurat_obj_integrated@reductions$harmony@cell.embeddings[,1:20],
+        file = paste0(path_r_objects, "/CLARIAJOA_pca_integrated_harmony.rds"))
+```
+
+# Save processed Seurat objects
+```{r}
+# Save processed lognorm Seurat object
+saveRDS(seurat_obj_integrated, paste0(path_r_objects, "/CLARIAJOA_harmony_processed.rds"))
+#seurat_obj_integrated <- readRDS(paste0(path_r_objects, "/CLARIAJOA_harmony_processed.rds"))
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

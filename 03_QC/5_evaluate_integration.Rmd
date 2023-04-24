@@ -1,0 +1,289 @@
+---
+title: "Evaluate integration"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+In the previous notebook we have integrated all the data coming from different libraries of this project using `Harmony` package. Now, we will compare the results obtained to ensure it integrates nicely our data reducing the batch-effect and preserving the biological variability.
+
+## Objective
+In this Rmarkdown document, we are going to evaluate the data integration across several variables or possible confounders. To do so, we will use visual inspection by plotting the data on 2-dimensions with the UMAP projection as well as the [LISI algorithm](https://www.nature.com/articles/s41592-019-0619-0), which computes a Local Inverse Simpson’s Index (LISI). 
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(lisi)
+library(RColorBrewer)
+library(ggridges)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_samples_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata_samples_all.csv")
+path_r_objects <- here::here("03_QC/results/R_objects")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Parameters
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease")
+
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "S.Score", "G2M.Score", "pct_mt", "pct_rb")
+
+# Color palette
+color_palette <- Polychrome::createPalette(25, c("#fc6060", "#74f774", "#7c7cfc"))
+names(color_palette) <- NULL
+#Polychrome::swatch(color_palette)
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+metadata_samples <- read.csv(path_samples_metadata)
+
+# Merging metadata_all tables
+metadata_all <- left_join(metadata, metadata_samples, by = "patient")
+
+print("Libraries metadata")
+DT::datatable(metadata_all, options = list(scrollX = TRUE))
+
+# Load Seurat object
+seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_alldata_lognorm_processed.rds"))
+seurat_obj
+
+# Load LISI data
+confounders_df <- readRDS(paste0(path_r_objects, "/CLARIAJOA_confounders.rds"))
+lisi_scores_df <- readRDS(paste0(path_r_objects, "/CLARIAJOA_lisi_scores.rds"))
+
+# Load Seurat objects
+seurat_obj_harmony <- readRDS(paste0(path_r_objects, "/CLARIAJOA_harmony_processed.rds"))
+```
+
+
+# UMAP projection by confounder variables
+To correct batch-specific effects (due to different libraries of origin or other possible confounders), we have integrated the scRNA-seq data libraries from this project. Moreover, we will also explore additional sources of uninterested variation, such as the UMIs / genes per cell, mitochondrial / ribosomal gene expression and S/G2M-phase markers on the UMAP embedding. Finally, we will also check the scrublet doublet predictions.
+
+## Uncorrected (without data integration)
+```{r fig.width=20, fig.height=10}
+# Visualizing UMAP
+gg_umap_uncorrected_confounders <- purrr::map2(confounder_variables, confounder_names, 
+                                                 function(confounder, title) {
+  gg <- DimPlot(seurat_obj, 
+               reduction = "umap",
+               group.by = confounder,
+               pt.size = 0.1) +
+    labs(title=title) +
+    scale_color_manual(values=color_palette)
+  gg
+})
+
+cowplot::plot_grid(plotlist = gg_umap_uncorrected_confounders, ncol = 3)
+```
+
+```{r fig.width=14, fig.height=15}
+gg_umap_uncorrected_qc <- FeaturePlot(
+  seurat_obj,
+  reduction = "umap",
+  features = qc_metrics,
+  order = TRUE,
+  ncol = 2)
+
+gg_umap_uncorrected_qc
+```
+
+
+## Harmony
+The first integration approach was carried out with [Harmony](https://www.nature.com/articles/s41592-019-0619-0). [Chazarra-Gil *et al*](https://www.biorxiv.org/content/10.1101/2020.05.22.111211v2), which was reported to be among the best scRNA-seq integration methods, especially in terms of scalability, in a recent integration benchmarking study.
+
+```{r fig.width=20, fig.height=10}
+# Visualizing UMAP
+gg_umap_harmony_confounders <- purrr::map2(confounder_variables, confounder_names, 
+                                                 function(confounder, title) {
+  gg <- DimPlot(seurat_obj_harmony, 
+               reduction = "umap",
+               group.by = confounder,
+               pt.size = 0.1) +
+    labs(title=title) +
+    scale_color_manual(values=color_palette)
+  gg
+})
+
+cowplot::plot_grid(plotlist = gg_umap_harmony_confounders, ncol = 3)
+```
+
+```{r fig.width=14, fig.height=15}
+gg_umap_harmony_qc <- FeaturePlot(
+  seurat_obj_harmony,
+  reduction = "umap",
+  features = qc_metrics,
+  order = TRUE,
+  ncol = 2)
+
+gg_umap_harmony_qc
+```
+
+
+## Comparison
+```{r fig.width=15, fig.height=5}
+gg_umap_uncorrected_c <- DimPlot(
+  seurat_obj,
+  reduction = "umap",
+  group.by = "library_name") +
+  labs(title="Uncorrected") +
+    scale_color_manual(values=color_palette) 
+
+gg_umap_harmony_c <- DimPlot(
+  seurat_obj_harmony,
+  reduction = "umap",
+  group.by = "library_name") +
+  labs(title="Harmony integration") +
+    scale_color_manual(values=color_palette) +
+  NoLegend()
+
+
+cowplot::plot_grid(plotlist = list(gg_umap_uncorrected_c, 
+                                   gg_umap_harmony_c), 
+                   ncol = 2, rel_widths = c(1.5, 1))
+```
+
+
+# LISI score across confounder variables using PCA embeddings
+Before, we have visualized to which extent `Harmony` was able to correct for batch effects. However, UMAPs represent a 2D visual representation of the data, which is probabilistic, non-linear and largely overplotted. Thus, it is important to quantify the success of the batch effect correction using the latent space (PCA). 
+
+To achieve it, we have computed the Local Inverse Simpson’s Index [(LISI) ](https://www.nature.com/articles/s41592-019-0619-0), which measures the batch diversity in the neighborhood of each cell. In other words, "it computes the number of cells that can be drawn from a neighbor list before one batch is observed twice. Thus, LISI scores range from 1 to N, where N is the total number of batches in the dataset", as explained in recent [benchmarking of scRNA-seq data integration ](https://www.biorxiv.org/content/10.1101/2020.05.22.111161v2). Therefore, a high LISI indicates a high degree of batch diversity in the neighborhood of a cell.
+
+```{r fig.height=10, fig.width=15}
+# Prepare data
+lisi_scores_df$correction <- factor(lisi_scores_df$correction,
+                                    levels = c("Uncorrected", "Harmony"))
+
+# Plot LISI scores by confounder variable
+gg_lisi_scores_by_confounder_list <- purrr::map2(confounder_variables, confounder_names, 
+                                                 function(confounder, title) {
+  gg <- gg_lisi_scores_by_confounder(lisi_scores_df, confounder, title)
+  gg
+})
+
+cowplot::plot_grid(plotlist = gg_lisi_scores_by_confounder_list, ncol = 3)
+```
+
+
+Now, only plotting the confounder variable we have considered the one incorporating the major batch-effect.
+```{r fig.width=7, fig.height=5}
+gg_lisi_scores <- lisi_scores_df %>% 
+  ggplot(aes(x = library_name, y = correction, fill = correction)) +
+  geom_density_ridges(quantile_lines = TRUE, quantile_fun = function(x,...) median(x)) +
+  theme_classic() +
+  labs(title = "",
+       x = "LISI score", 
+       y = "") +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 13, hjust = 0.5),
+    strip.text = element_text(color = "black", size = 12),
+    axis.title.x = element_text(color = "black", size = 13),
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.text.x = element_text(size = 11)
+)
+
+gg_lisi_scores
+```
+
+
+# LISI score across confounder variables shown onto UMAP projection
+Although the LISI score has been computed for each cell using the PCA embedding, we will now project these scores onto the UMAP projection to better observe how batch-effects can be corrected with data integration.
+
+```{r}
+# Prepare data
+lisi_scores_df_LISI <- lisi_scores_df
+colnames(lisi_scores_df_LISI) <- paste("LISI", colnames(lisi_scores_df_LISI), sep = "_")
+lisi_scores_list <- split(x = lisi_scores_df_LISI, f = lisi_scores_df_LISI$LISI_correction, drop = TRUE)
+
+# Add LISI scores to Seurat objects
+seurat_obj@meta.data <- cbind(seurat_obj@meta.data,
+                              lisi_scores_list$Uncorrected)
+seurat_obj_harmony@meta.data <- cbind(seurat_obj_harmony@meta.data,
+                              lisi_scores_list$Harmony)
+```
+
+## Uncorrected (without data integration)
+```{r fig.width=15, fig.height=15}
+# Visualizing UMAP
+gg_umap_uncorrected_lisi <- purrr::map2(confounder_variables, confounder_names, 
+                                                 function(confounder, title) {
+  confounder_LISI <- paste("LISI", confounder, sep = "_")                          
+  gg <- FeaturePlot(seurat_obj,
+                   reduction = "umap",
+                   features = confounder_LISI) +
+    labs(title = paste0(title, " (n=", count(unique(seurat_obj@meta.data[confounder])), ")")) +
+    scale_colour_gradientn(colours = rev(brewer.pal(n = 12, name = "Spectral")))
+  gg
+})
+
+cowplot::plot_grid(plotlist = gg_umap_uncorrected_lisi, ncol = 2)
+```
+
+## Harmony
+```{r fig.width=15, fig.height=15}
+# Visualizing UMAP
+gg_umap_harmony_lisi <- purrr::map2(confounder_variables, confounder_names, 
+                                                 function(confounder, title) {
+  confounder_LISI <- paste("LISI", confounder, sep = "_")                          
+  gg <- FeaturePlot(seurat_obj_harmony,
+                   reduction = "umap",
+                   features = confounder_LISI) +
+    labs(title = paste0(title, " (n=", count(unique(seurat_obj_harmony@meta.data[confounder])), ")")) +
+    scale_colour_gradientn(colours = rev(brewer.pal(n = 12, name = "Spectral")))
+  gg
+})
+
+cowplot::plot_grid(plotlist = gg_umap_harmony_lisi, ncol = 2)
+```
+
+## Comparison
+```{r fig.width=12, fig.height=5}
+gg_umap_uncorrected_s <- FeaturePlot(
+  seurat_obj,
+  reduction = "umap",
+  features = "LISI_library_name") +
+  labs(title="Uncorrected") +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 12, name = "Spectral")))
+
+gg_umap_harmony_s <- FeaturePlot(
+  seurat_obj_harmony,
+  reduction = "umap",
+  features = "LISI_library_name") +
+  labs(title="Harmony integration") +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 12, name = "Spectral")))
+
+cowplot::plot_grid(plotlist = list(gg_umap_uncorrected_s,
+                                   gg_umap_harmony_s), 
+                   ncol = 2)
+```
+
+
+From the previous results, we can see how the `Harmony` integration algorithm successfully correct for almost all the major confounders as there is a good cell intermixing among the different levels for each confounder variable.
+
+# Session Info
+```{r}
+sessionInfo()
+```
