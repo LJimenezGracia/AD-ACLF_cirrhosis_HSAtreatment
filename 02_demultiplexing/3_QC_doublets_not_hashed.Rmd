@@ -1,0 +1,161 @@
+---
+title: "Quality control doublet prediction not-hashed libraries"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+## Objective
+In this Rmarkdown document, we are going to summarize the results obtained by the `scrublet` doublet detection step to flag possible "Doublets" present in the not-hashed data, for which there is no background truth for barcodes containing more than one cell. Finally, we will merge all not-hashed libraries into a single Seurat object.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_samples_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata_samples_all.csv")
+path_save_seuratobj <- here::here("02_demultiplexing/results/R_objects")
+
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset, filtered matrices were processed with `cellranger v6.1.1` and the doublet predictions were obtained using `scrublet`.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+metadata <- metadata[order(metadata$gem_id), !names(metadata) %in% "project", drop = F]
+
+metadata_samples <- read.csv(path_samples_metadata)
+
+# Get list of GEM_IDs for not-hashed samples
+not_hashed_gemids <- as.vector(sort(unique(metadata$gem_id[metadata$hashing == "not_hashed"])))
+
+# Merging project and samples metadata tables
+metadata <- metadata %>%
+  filter(type == c("cDNA")) %>%
+  filter(gem_id %in% not_hashed_gemids)
+metadata_all <- left_join(metadata, metadata_samples, by = "patient")
+
+print("Libraries metadata")
+DT::datatable(metadata_all, options = list(scrollX = TRUE))
+```
+
+```{r}
+# Create Seurat object list
+seurat_obj_not_hashed_list <- purrr::map(not_hashed_gemids, function(gem_id) {
+  path_filtered_matrix <- here::here(paste(
+  "01_cellranger_mapping/jobs", gem_id, gem_id, "outs/filtered_feature_bc_matrix", sep = "/"))
+  counts_matrix <- Read10X(data.dir = path_filtered_matrix)
+  seurat = CreateSeuratObject(counts = counts_matrix)
+  # Add gem_id to each barcode
+  seurat$gem_id <- gem_id
+  seurat
+})
+names(seurat_obj_not_hashed_list) <- not_hashed_gemids
+
+
+# Add doublet predictions
+scrublet_files_list <- purrr::map(not_hashed_gemids, function(gem_id) {
+  path_scrublet <- here::here(paste0(
+  "02_demultiplexing/results/doublet_prediction/tables/", gem_id, "_doublet_prediction_scrublet.csv"))
+})
+scrublet_dfs <- lapply(scrublet_files_list, function(scrublet_file_path){
+  read.csv(scrublet_file_path)
+})
+names(scrublet_dfs) <- not_hashed_gemids
+
+# Integrate scrublet doublet predictions to seurat metadata
+seurat_obj_not_hashed_list <- purrr::map2(seurat_obj_not_hashed_list, 
+                                          names(seurat_obj_not_hashed_list), 
+                                          function(seurat, gem_id) {
+  if (all(colnames(seurat) == scrublet_dfs[[gem_id]]$barcodes)) {
+    seurat$scrublet_doublet_scores <- scrublet_dfs[[gem_id]]$scrublet_doublet_scores
+    seurat$scrublet_predicted_doublet <- scrublet_dfs[[gem_id]]$scrublet_predicted_doublet
+    seurat
+  } 
+})
+
+seurat_obj_not_hashed_list
+```
+
+# Doublet prediction with Scrublet
+
+```{r fig.width = 10, fig.height = 25}
+# Comparison by library
+gg_scrublet_list <- purrr::map2(seurat_obj_not_hashed_list, 
+                                names(seurat_obj_not_hashed_list), 
+                                function(seurat, gem_id) {
+                                  
+  # Retrieving approx. scrublet doublet predicted threshold
+  scrublet_threshold <- round(median(
+    c(max(seurat$scrublet_doublet_scores[seurat$scrublet_predicted_doublet == "False"]),
+      min(seurat$scrublet_doublet_scores[seurat$scrublet_predicted_doublet == "True"]))), 2)
+  
+  # Plot scrublet doublet scores & predictions
+  gg_scrublet_pred <- gg_nothashed_scrublet_pred(seurat@meta.data, gem_id, scrublet_threshold)
+  
+  # Plot scrublet doublet predictions & UMIs
+  gg_umis <- gg_nothashed_umis(seurat)
+  
+  gg_scrublet_pred + gg_umis
+})
+
+cowplot::plot_grid(plotlist = gg_scrublet_list,
+                   nrow = length(seurat_obj_not_hashed_list))
+```
+
+# Merge Seurat objects
+```{r}
+seurat_obj_not_hashed <- merge(seurat_obj_not_hashed_list[[1]], 
+                    y = seurat_obj_not_hashed_list[2:length(seurat_obj_not_hashed_list)], 
+                    add.cell.ids = not_hashed_gemids)
+
+# Add gem_id to barcode
+new_barcodes <- str_c(seurat_obj_not_hashed$gem_id, colnames(seurat_obj_not_hashed), sep = "_")
+seurat_obj_not_hashed <- RenameCells(seurat_obj_not_hashed, new.names = new_barcodes)
+seurat_obj_not_hashed
+
+# Remove Seurat object list
+rm(seurat_obj_not_hashed_list)
+```
+
+# Add sample metadata
+Now, we will add samples' metadata in the Seurat object. In this project, each library contains samples from a single donor. Therefore, we will merge samples metadata by its donor ID, and considering that all samples that were not multiplex only contain blood, we will also include the tissue of origin variable to match with donors for which different tissues were processed.
+```{r}
+# Create dataframe with seurat metadata and samples & project
+seurat_obj_metadata <- left_join(seurat_obj_not_hashed@meta.data, metadata_all, by = "gem_id")
+
+# Add metadata information to Seurat object
+rownames(seurat_obj_metadata) <- rownames(seurat_obj_not_hashed@meta.data)
+seurat_obj_not_hashed@meta.data <- seurat_obj_metadata
+```
+
+# Save Merged Seurat object
+```{r}
+saveRDS(seurat_obj_not_hashed, 
+        paste0(path_save_seuratobj, "/CLARIAJOA_nothashed_merged.rds"))
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

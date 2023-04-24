@@ -1,0 +1,255 @@
+---
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center',
+                      message = FALSE, warning = FALSE)
+title <- paste0("Hashtag Demultiplexing: ", lib)
+```
+
+---
+title: "`r title`"
+---
+
+# Introduction
+In this project **CLARIAJOA**, to increase the recovered cell number and to reduce possible batch-effects, samples were labeled with a batch-specific hashtag oligonucleotide (HTO), as described in [Stoeckius et al.](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-018-1603-1) and cross-linked with antibodies that bind to ubiquitous cell surface proteins (CSP). Then, several batches were multiplexed and processed all together into a single 10X Chromium Chip Channel (GEM well), sequencing together single-cell HTO and cDNA reads. This will allow to demultiplex the samples and to detect inter-batch doublets, as those cell barcodes tagged with multiple HTOs. 
+
+## Objective
+In this Rmarkdown document, we are going to demultiplex the barcodes (cells) back to their original batch to identify inter-batch doublets and negative cells. To do so, we will follow the ["Demultiplexing with hashtag oligos (HTOs) pipeline"](https://satijalab.org/seurat/v4.0/hashing_vignette.html) from Seurat. This step will allow us to discard doublets in downstream analysis.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(Seurat)
+library(tidyverse)
+library(scales)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r warning = FALSE, message = FALSE}
+# Paths
+path_filtered_matrix <- here::here(paste(
+  "01_cellranger_mapping/jobs", lib, lib, "outs/filtered_feature_bc_matrix", sep = "/"))
+path_scrublet <- here::here(paste0(
+  "02_demultiplexing/results/doublet_prediction/tables/", lib, "_doublet_prediction_scrublet.csv"))
+path_save_seuratobj <- here::here(paste0(
+  "02_demultiplexing/results/R_objects/", lib, "_demultiplexed_margin1.rds"))
+
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+```{r}
+# Load 10X genomics data
+counts_matrix <- Read10X(path_filtered_matrix)
+
+# Load scrublet doublet predictions
+scrublet_df <- read.csv(file = path_scrublet)
+```
+
+
+# Demultiplex cells based on HTO enrichment
+To demultiplex, we will follow the ["Demultiplexing with hashtag oligos (HTOs) pipeline"](https://satijalab.org/seurat/v3.0/hashing_vignette.html) from Seurat.
+
+```{r}
+# Setup Seurat object
+seurat_obj <- CreateSeuratObject(counts = counts_matrix$`Gene Expression`)
+
+# Add HTO data as a new assay independent from RNA
+seurat_obj[['HTO']] = CreateAssayObject(counts = counts_matrix$`Antibody Capture`)
+
+# When performing normalization across CELLS, removing cells having no HTO counts.
+seurat_obj <- seurat_obj[, colSums(seurat_obj@assays$HTO@data) != 0]
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+# If performing CLR normalization, normalize across features (1) or cells (2)
+seurat_obj <- NormalizeData(seurat_obj, assay = "HTO", normalization.method = "CLR", margin = 1)
+```
+
+Here, we use the function `HTODemux()` to assign single cells back to their sample-of-origin.
+```{r}
+seurat_obj <- HTODemux(seurat_obj, assay = "HTO", positive.quantile = 0.99)
+```
+
+# Visualize demultiplexed results
+The previous demultiplexing step classified each barcode in one or more batches and its output was saved in the object metadata. Now, we will explore how accurate this algorithm has been to classify the 10X barcodes into singlets, doublets and negative/ambiguous cells.
+
+```{r}
+table(seurat_obj$HTO_classification.global)
+```
+
+
+## Ridge plot enrichment for selected HTOs
+
+From the ridge plot, we can see the expression of each hashtag across the different batches classified by the algorithm. Ideally, we should observe a large signal-to-noise ratio, which means that the HTO is only highly expressed in its batch of origin, being close to 0 in the others.
+
+```{r fig.height=10, fig.width=14}
+# Group cells based on the max HTO signal
+Idents(seurat_obj) <- "HTO_maxID"
+gg_ridgeplot <- RidgePlot(seurat_obj,
+                           assay = "HTO",
+                           features = rownames(seurat_obj[["HTO"]]),
+                           ncol = 2)
+gg_ridgeplot
+```
+
+
+## Heatmap of HTO values
+
+The heatmap shows us the HTO values of each 10X barcode based on our classifications. We can visualize singlets (barcodes with high expression of the HTO of origin), doublets (expression of more than 1 HTO, meaning that > 1 cell is captured by a single droplet) and negative cells (barcodes not labelled by any HTO). We strive for a similar number of cells across HTO-batches, as this increases the capacity to identify heterotypic doublets.
+
+```{r fig.height=10, fig.width=14}
+gg_heatmap <- HTOHeatmap(seurat_obj, assay = "HTO", ncells = 5000) +
+  labs(x = "10X barcode", y = "Batch-specific HTO")
+gg_heatmap
+```
+
+
+## tSNE
+
+We can also visualize the two dimensional t-SNE embedding of cells in HTO space. Here, we are grouping cells by singlets and doublets for simplicity. A clear separation of clusters would indicate a good labeling.
+
+```{r fig.height=10, fig.width=14}
+# Remove negative cells from the object
+seurat_obj_subset <- subset(
+  seurat_obj,
+  subset = HTO_classification.global == "Negative",
+  invert = TRUE)
+
+# Calculate a tSNE embedding of the HTO data
+DefaultAssay(seurat_obj_subset) <- "HTO"
+seurat_obj_subset <- seurat_obj_subset %>%
+  ScaleData(features = rownames(seurat_obj_subset), verbose = TRUE) %>%
+  RunPCA(features = rownames(seurat_obj_subset), approx = FALSE) %>%
+  RunTSNE(dims = 1:nrow(seurat_obj_subset), perplexity = 100, check_duplicates = FALSE)
+
+gg_tsne <- DimPlot(seurat_obj_subset, group.by = "HTO_classification.global")
+gg_tsne
+```
+
+
+## Numbers of cells
+
+Now, let us visualize the number of singlets, doublets, and negative cells as well as the distribution of RNA UMIs per each group of cells.
+
+```{r fig.height=10, fig.width=14}
+# Reorder classification
+seurat_obj$HTO_classification.global <- factor(
+  x = seurat_obj$HTO_classification.global,
+  levels = c("Singlet", "Doublet", "Negative"))
+
+# Generate dataframe to inspect results by HTO-global classification
+seurat_obj_df_glob <- seurat_obj@meta.data %>%
+  group_by(HTO_classification.global) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = (count / sum(count)) * 100)
+
+# Generate dataframe to inspect results by HTO batch-specific classification
+hto_levels <- levels(as.factor(seurat_obj$hash.ID))
+hto_levels <- hto_levels[hto_levels != "Negative"]
+seurat_obj_df_indv <- seurat_obj@meta.data %>%
+  group_by(HTO_classification) %>%
+  filter(HTO_classification %in% hto_levels) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = (count / sum(count)) * 100)
+
+
+# Absolute frequencies
+gg_counts_glob <- gg_demultiplex_absfreq_glob(seurat_obj_df_glob)
+
+# Percentages HTO-global classification
+gg_percent_glob <- gg_demultiplex_percent_glob(seurat_obj_df_glob)
+
+# RNA UMIs distribution
+gg_umis_glob <- gg_demultiplex_umis_glob(seurat_obj)
+
+# Percentages HTO batch-specific
+gg_percent_indv <- gg_demultiplex_percent_indv(seurat_obj_df_indv)
+
+cowplot::plot_grid(gg_counts_glob, gg_percent_glob, 
+                   gg_umis_glob, gg_percent_indv,
+                   ncol = 2)
+```
+
+From the [10X Genomics protocols](https://assets.ctfassets.net/an68im79xiti/4tjk4KvXzTWgTs8f3tvUjq/2259891d68c53693e753e1b45e42de2d/CG000183_ChromiumSingleCell3__v3_UG_Rev_C.pdf), we know that there is a linear relationship between the percentage of doublets and the target number of cells per 10X Chromium Chip Channel (GEM well), with a slope of 8% multiplets for 10,000 cells. Thus, if we do not use cell hashing we normally aim for 5,000 cells, as 4% doublets will not have a large impact in our analysis.
+However, robustly detecting cross-sample doublets with Cell hashing allowed us to overload the 10X Genomics droplet-system and get a higher throughput at the same cost. The challenge still remains with intra-batch doublets (homotypic or heterotypic).
+
+
+# Signal-to-noise ratio (SNR)
+
+We quantify the SNR in the cell hashing experiment by dividing, for each cell, the first and second highest HTO normalized counts. In the case of singlets, we should expect a clear deviation from 1.
+
+```{r fig.height=5, fig.width=7}
+# Compute signal-to-noise ratio
+seurat_obj$hashing_snr <- purrr::map_dbl(colnames(seurat_obj), function(x) {
+  signal <- seurat_obj[["HTO"]]@data[seurat_obj$HTO_maxID[x], x]
+  noise <- seurat_obj[["HTO"]]@data[seurat_obj$HTO_secondID[x], x]
+  snr <- (signal + 0.1) / (noise + 0.1)
+  snr
+})
+
+gg_snr <- gg_demultiplex_snr(seurat_obj@meta.data)
+gg_snr
+```
+
+
+# Doublet prediction accuracy with Scrublet
+
+As anticipated above, with cell hashing we cannot detect inter-batch doublets (heterotypic or homotypic). However, there are several single-cell methods designed to predict, flag and remove possible doublets. To do so, we have run [scrublet](https://www.cell.com/cell-systems/pdfExtended/S2405-4712(18)30474-5) on the 10X filtered matrix.
+By running the doublet prediction algorithm scrublet we obtained a doublet probability score (ranging from 0 to 1) and a doublet prediction (true or false) according to a specific cutoff value calculated for each library (dashed red line in the following plot).
+
+Given that hashing gives us ground-truth about the doublets in the dataset, we can assess the correlation between both approaches and, the accuracy of scrublet. Ideally, we expect to find correlation between both approaches, specially cell barcodes classified as doublet having higher doublet scores compared to singlets and negative cells.
+
+```{r fig.height=5, fig.width=7}
+# Integrate scrublet doublet predictions to seurat metadata
+if (all(scrublet_df$barcodes == colnames(seurat_obj))) {
+  seurat_obj$scrublet_doublet_scores <- scrublet_df$scrublet_doublet_scores
+  seurat_obj$scrublet_doublet_scores_scaled <- scale(
+    scrublet_df$scrublet_doublet_scores,
+    center = TRUE,
+    scale = TRUE
+  )
+  seurat_obj$scrublet_predicted_doublet <- as.factor(scrublet_df$scrublet_predicted_doublet)
+} else {
+  scrublet_df <- subset(scrublet_df,
+                        subset = barcodes %in% colnames(seurat_obj))
+  seurat_obj$scrublet_doublet_scores <- scrublet_df$scrublet_doublet_scores
+  seurat_obj$scrublet_doublet_scores_scaled <- scale(
+    scrublet_df$scrublet_doublet_scores,
+    center = TRUE,
+    scale = TRUE
+  )
+  seurat_obj$scrublet_predicted_doublet <- as.factor(scrublet_df$scrublet_predicted_doublet)  
+}
+
+# Retrieving approx. scrublet doublet predicted threshold
+scrublet_threshold <- round(median(
+  c(max(seurat_obj$scrublet_doublet_scores[seurat_obj$scrublet_predicted_doublet == "False"]),
+    min(seurat_obj$scrublet_doublet_scores[seurat_obj$scrublet_predicted_doublet == "True"]))
+  ), 2)
+
+# Plot doublet score distribution
+gg_scrublet <- gg_doublet_scores_scrublet(seurat_obj@metadata, scrublet_threshold)
+gg_scrublet
+```
+
+
+# Save objects
+```{r}
+# Save demultiplexed Seurat objects
+saveRDS(seurat_obj, path_save_seuratobj)
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

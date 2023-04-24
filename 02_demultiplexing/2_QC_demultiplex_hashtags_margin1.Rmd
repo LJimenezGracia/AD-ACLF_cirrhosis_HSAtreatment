@@ -1,0 +1,221 @@
+---
+title: "Quality control demultiplexing hashtags (margin 1)"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+## Objective
+In this Rmarkdown document, we are going to summarize the results obtained with the hashtag demultiplexing step, by running the `1_demultiplex_hashtags.Rmd` notebook. Finally, we will merge all hashed libraries into a single Seurat object.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(ggpubr)
+library(plyr)
+library(gt)
+library(grid)
+library(ggrepel)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+path_demultiplexing_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata_samples_all.csv")
+path_demultiplexed_Robjects <- here::here("02_demultiplexing/results/R_objects/margin1")
+path_save_seuratobj <- here::here("02_demultiplexing/results/R_objects")
+
+# Functions
+source(here::here("bin/utils.R"))
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset, filtered matrices were processed with `cellranger v6.1.1` and further demultiplexed with `HTODemux()`, and the doublet predictions were obtained using `scrublet`.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+metadata <- metadata[order(metadata$gem_id), !names(metadata) %in% "project", drop = F]
+metadata_demultiplexing <- read.csv(path_demultiplexing_metadata)
+
+# Get list of GEM_IDs for hashed samples
+hashed_gemids <- as.vector(sort(unique(metadata$gem_id[metadata$hashing == "hashed"])))
+
+# Filtering metadata
+metadata_all <- metadata %>% 
+  filter(type == "cDNA") %>%
+  filter(gem_id %in% hashed_gemids)
+hashed_libraries <- as.vector(sort(unique(metadata_all$library_name[metadata_all$hashing == "hashed"])))
+
+
+print("Libraries metadata")
+metadata_all
+#DT::datatable(metadata_all)
+
+print("Patients metadata")
+metadata_demultiplexing
+#DT::datatable(metadata_all)
+```
+
+```{r}
+# Load demultiplexed seurat objects (.Rds files)
+rds_files_list <- list.files(path = path_demultiplexed_Robjects,
+                             pattern = paste(hashed_gemids, collapse = "|"))
+path_rdsfile_list <- paste(path_demultiplexed_Robjects, rds_files_list, sep = "/")
+
+seurat_obj_hashed_list <- purrr::map(path_rdsfile_list, readRDS)
+names(seurat_obj_hashed_list) <- hashed_gemids
+
+# Process seurat objects (discard HTO assay and add GEM ID to each barcode)
+seurat_obj_hashed_list <- purrr::map2(seurat_obj_hashed_list,
+                                  names(seurat_obj_hashed_list),
+                                  function(seurat_obj, gem_id) {
+  seurat_obj[["HTO"]] <- NULL
+  seurat_obj$gem_id <- as.factor(gem_id)
+  seurat_obj$library_name <- metadata_all$library_name[metadata_all$gem_id == gem_id]
+  seurat_obj
+})
+
+seurat_obj_hashed_list
+```
+
+```{r}
+# Merge Seurat objects
+seurat_obj_hashed <- merge(seurat_obj_hashed_list[[1]], 
+                                y = seurat_obj_hashed_list[2:length(seurat_obj_hashed_list)],   
+                                add.cell.ids = hashed_gemids)
+seurat_obj_hashed$orig.ident <- as.factor(seurat_obj_hashed$orig.ident)
+seurat_obj_hashed
+
+# Remove Seurat object lists
+rm(seurat_obj_hashed_list)
+```
+
+# Hashtag demultiplexing QC
+
+Here, we aim to report the hashing efficiency as well as the cell barcode classification obtained in the demultiplexing step. However, the doublet detection in this process might not be sufficient as there could still be a small number of intra-sample doublets among barcodes classified as "Singlets". For this reason, we will use the predicted doublet score by `scrublet` to flag possible false negatives in the data.
+
+```{r}
+# Generate demultiplexing table results
+demux_global_cells <- table(seurat_obj_hashed$library_name,
+                            seurat_obj_hashed$HTO_classification.global)
+
+table_demultiplexing_summary(demux_global_cells)
+```
+
+
+## Signal-to-noise Ratio (SNR)
+
+```{r fig.width=16, fig.height=7}
+# Reorder classification
+seurat_obj_hashed$HTO_classification.global <- factor(
+  x = seurat_obj_hashed$HTO_classification.global,
+  levels = c("Singlet", "Doublet", "Negative"))
+
+# Plot SNR distribution  
+gg_snr_glob <- gg_demultiplexing_qc_snr_glob(seurat_obj_hashed@meta.data, hashed_libraries)
+gg_snr_sing <- gg_demultiplexing_qc_snr_sing(seurat_obj_hashed@meta.data, hashed_libraries)
+
+cowplot::plot_grid(gg_snr_glob, gg_snr_sing, ncol = 2, rel_widths = c(1.5, 1))
+```
+
+
+## Singlets vs Negative cells
+
+Also, we aim to verify that negative cell barcodes are indeed empty droplets. To do so, we will compare different QC variables (UMIs and genes) between cell barcode classified as "Singlets" and "Negative". If we observe a clear difference between both conditions, where negative cell barcodes have clearly less total UMIs and detected genes, we could proceed to filter them out.
+
+```{r fig.width=14, fig.height=7}
+# Plot SNR distribution  
+gg_svn_libsize <- gg_demultiplex_svn_libsize(seurat_obj_hashed@meta.data, hashed_libraries)
+gg_svn_libcomplex <- gg_demultiplex_svn_libcomplex(seurat_obj_hashed@meta.data, hashed_libraries)
+
+cowplot::plot_grid(gg_svn_libsize, gg_svn_libcomplex, ncol = 2)
+```
+
+As we can see, "Negative" cell barcodes have clearly less total UMI and detected genes than "Singlets". Thus, we will filter out these cell barcodes.
+
+## Doublet prediction accuracy with Scrublet
+
+```{r fig.width=14, fig.height=10}
+# Reorder classification
+seurat_obj_hashed$HTO_classification.global <- factor(
+  x = seurat_obj_hashed$HTO_classification.global,
+  levels = c("Singlet", "Doublet", "Negative"))
+
+# Plot scrublet doublet scores & predictions
+gg_scrublet_score_glob <-  gg_demultiplex_scrublet_scores_glob(seurat_obj_hashed@meta.data)
+gg_scrublet_pred_glob <- gg_demultiplex_scrublet_pred_glob(seurat_obj_hashed@meta.data)
+gg_scrublet_score_sing <- gg_demultiplex_scrublet_scores_sing(seurat_obj_hashed@meta.data)
+gg_scrublet_pred_sing <- gg_demultiplex_scrublet_pred_sing(seurat_obj_hashed@meta.data)
+
+cowplot::plot_grid(gg_scrublet_score_glob, gg_scrublet_pred_glob, 
+                   gg_scrublet_score_sing, gg_scrublet_pred_sing,  ncol = 2)
+```
+
+# Clean data
+
+Now, we can proceed to filter out cell barcodes classified as "Negative". However, at this point, we will preserve cells classified as "Doublets" to remove them in the next steps together with other potential doublets found within "Singlets".
+
+```{r}
+# Remove negative and doublet cells
+# seurat_obj_hashed <- subset(seurat_obj_hashed, 
+#                            subset = HTO_classification.global == "Negative",
+#                            invert = TRUE)
+seurat_obj_hashed <- subset(seurat_obj_hashed, 
+                            subset = HTO_classification.global == "Singlet",
+                            invert = FALSE)
+
+# Remove some hashtag information variables
+# except hash.ID and HTO_classification.global
+metadata_fields_toremove <- c("nCount_HTO", "nFeature_HTO",
+                              "HTO_maxID", "HTO_secondID", "HTO_margin",
+                              "HTO_classification", "HTO_classification.global")
+for (field in metadata_fields_toremove) {
+  seurat_obj_hashed[[field]] <- NULL
+}
+```
+
+
+# Add sample metadata
+
+Now, we will add samples' metadata in the Seurat object. In this project, each library contains samples from a single donor, but in some cases (patient samples from matched study), we have multiplexed different tissues of origin (PBMC and synovial fluid). Therefore, we will merge samples metadata by its donor ID, and we will also retrieve and include hashing metadata regarding its tissue of origin.
+```{r}
+# Create dataframe with seurat metadata and samples & project
+metadata_demultiplexing <- left_join(metadata_all, metadata_demultiplexing, by = "patient")
+seurat_obj_metadata <- left_join(seurat_obj_hashed@meta.data, metadata_demultiplexing, by = "gem_id")
+
+# Add metadata information to Seurat object
+rownames(seurat_obj_metadata) <- rownames(seurat_obj_hashed@meta.data)
+seurat_obj_hashed@meta.data <- seurat_obj_metadata
+
+# Remove duplicated
+seurat_obj_hashed$library_name <- seurat_obj_hashed$library_name.x
+seurat_obj_hashed$library_name.x <- NULL
+seurat_obj_hashed$library_name.y <- NULL
+
+seurat_obj_hashed
+```
+
+# Save Merged Seurat object
+```{r}
+saveRDS(seurat_obj_hashed, 
+        paste0(path_save_seuratobj, "/CLARIAJOA_demultiplexed_margin1_merged.rds"))
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```
