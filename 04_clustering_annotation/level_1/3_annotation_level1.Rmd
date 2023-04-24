@@ -1,0 +1,396 @@
+---
+title: "Annotation: Level 1"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+After the pre-processing steps done in previous notebooks, we will now start with the downstream data analysis in order to extract biological insights and describe the underlying biology.
+
+## Objective
+In this Rmarkdown document, we are going to assign cell type clusters into different cell-lineage clusters based on the similarity of their gene expression profiles. Then, we will perform again process each object to define cell-type specific clusters with more resolution.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(DT)
+library(dittoSeq)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+
+path_r_objects <- here::here("04_clustering_annotation/results/R_objects")
+path_r_figs <- here::here("04_clustering_annotation/results/figs")
+path_r_tables <- here::here("04_clustering_annotation/results/tables")
+
+# Functions
+source(here::here("bin/utils.R"))
+
+# Parameters
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "pct_mt", "pct_rb", "scrublet_doublet_scores")
+
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade", "gender")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease", "Gender")
+
+# Color palette
+set.seed(1234) # for reproducibility
+color_palette <- Polychrome::createPalette(32, c("#fc6060", "#74f774", "#7c7cfc"))
+names(color_palette) <- NULL
+#Polychrome::swatch(color_palette)
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+
+# Merging metadata_all tables
+metadata <- metadata %>% filter(type == "cDNA")
+
+print("Libraries metadata")
+DT::datatable(metadata, options = list(scrollX = TRUE))
+
+## Define resolution of choice
+resolution <- 0.05
+resolution_name <- paste0("RNA_snn_res.", resolution)
+
+# Load Seurat object
+seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_clustering_level1_resolutions.rds"))
+DefaultAssay(seurat_obj) <- "RNA"
+Idents(seurat_obj) <- "RNA_snn_res.0.05"
+seurat_obj
+
+# Add variable
+seurat_obj$disease_grade_treatment <- paste0(seurat_obj$disease_grade, "_", seurat_obj$treatment)
+seurat_obj$disease_grade_treatment_patient <- paste0(seurat_obj$disease_grade, "_", seurat_obj$treatment, "_", seurat_obj$patient)
+
+# Load biomarkers
+seurat_obj_markers <- readRDS(paste0(path_r_objects, "/CLARIAJOA_biomarkers_level1_res0.05.rds"))
+```
+
+
+# Explore cell clusters
+To visualize the cell clusters, there are a few different dimensionality reduction techniques, such as t-SNE and UMAP. These methods require to input a number of PCA dimensions (same number as the one used for the clustering). We will not run UMAP again as it was computed in the previous notebook.
+```{r fig.width=14, fig.height=10}
+# Clustering overview
+gg_umap_clustering <- DimPlot(object = seurat_obj,
+        group.by = resolution_name,
+        label = TRUE,
+        label.size = 5,
+        cols = color_palette,
+        raster = FALSE,
+        ) & NoLegend()
+gg_umap_clustering
+```
+
+Now, we will also explore clusters across therapy.
+```{r fig.width=14, fig.height=6}
+# Clusters across therapys
+gg_clustering_bytherapy_umap <- DimPlot(
+  object = seurat_obj,
+  group.by = resolution_name,
+  split.by = "disease_grade",
+  label = FALSE,
+  cols = color_palette
+  )
+
+gg_clustering_bytherapy_umap
+```
+
+
+## Cell clusters data exploration
+```{r}
+# Number of cells / cluster
+table(seurat_obj@active.ident)
+
+# Number of cells per cluster vs confounder variables
+table(seurat_obj$library_name, seurat_obj@active.ident)
+table(seurat_obj$disease_grade, seurat_obj@active.ident)
+table(seurat_obj$treatment, seurat_obj@active.ident)
+```
+
+
+## Assessing sources of uninteresting variation
+Next, we will explore additional metrics, such as the number of UMIs and genes per cell, mitochondrial / ribosomal gene expression and scrublet doublet scores on the UMAP embedding. 
+
+```{r fig.width=14, fig.height=15}
+gg_qc_umap <- FeaturePlot(
+  seurat_obj,
+  reduction = "umap",
+  features = qc_metrics,
+  cols = c("lightgrey", "darkblue"), 
+  order = TRUE,
+  ncol = 2)
+
+gg_qc_umap
+```
+
+```{r fig.width=10, fig.height=15}
+gg_qc_vln <- VlnPlot(
+  seurat_obj,
+  features = qc_metrics,
+  cols = color_palette, 
+  pt.size = 0,
+  ncol = 1)
+
+gg_qc_vln
+```
+
+Finally, we will also check the cell-cycle phase by assessing S-phase and G2M-phase markers signature.
+```{r fig.width=10, fig.height=10}
+gg_phase_vln <- VlnPlot(
+  seurat_obj,
+  features = c("S.Score", "G2M.Score"),
+  cols = color_palette, 
+  pt.size = 0,
+  ncol = 1)
+
+gg_phase_vln
+```
+
+# Explore cluster biomarkers
+## Table
+```{r}
+# Visualize top markers per cluster
+top_all_markers <- seurat_obj_markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 10, order_by = avg_log2FC)
+
+top_all_markers
+#DT::datatable(top_all_markers)
+```
+
+## Dotplot
+```{r fig.width=16, fig.height=6}
+# Visualize top markers per cluster
+top_all_markers <- seurat_obj_markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 4, order_by = avg_log2FC)
+
+top_genemarkers_list <- unique(top_all_markers$gene)
+
+DotPlot(
+  seurat_obj,
+  features = top_genemarkers_list,
+  dot.scale = 6) +
+  RotatedAxis()
+```
+
+
+<!-- ## FeaturePlot and ViolinPlot -->
+<!-- With the cells clustered and based on the previous cell-type markers, we will select the most informative gene markers for each cluster and some well-known cell markers and project them in the UMAP. Basically, we are looking for consistency of expression of the markers across the clusters (e.g. if there are two markers for a cell type and only one of them is expressed in a cluster, we cannot reliably assign that cluster to the cell type). -->
+<!-- ```{r} -->
+<!-- # Selected gene markers -->
+<!-- selected_markers <- seurat_obj_markers %>% -->
+<!--   group_by(cluster) %>% -->
+<!--   slice_max(n = 4, order_by = avg_log2FC) %>% -->
+<!--   group_split() -->
+<!-- ``` -->
+
+<!-- ```{r fig.width=7, fig.height=5} -->
+<!-- # Feature plots -->
+<!-- purrr::map(selected_markers, function(cluster) { -->
+<!--   FeaturePlot(seurat_obj, -->
+<!--               features = cluster$gene, -->
+<!--               label = TRUE, -->
+<!--               label.size = 2, -->
+<!--               ncol = 2) -->
+<!-- }) -->
+<!-- ``` -->
+
+## Explore gene markers
+
+```{r fig.width=25, fig.height=20}
+lineage_genes <- c("PTPRC", # CD45+, immune cells
+                   "CD3D", "CD3E", # T cells
+                   "CD4",  "IRF7", "FOXP3", # CD4+ T cells, Treg
+                   "CD8A", "CD8B", "NKG7", # CD8+ T cells, cytotoxic
+                   "KLRD1", "GZMA", # NK cells
+                   "CD79A", # B cells
+                   "MS4A1", "JCHAIN", # Naive vs Plasma cells
+                   "LYZ", "CD14", "FCGR3A", "PLAC8", "CD209", # Mono/macro/DCs
+                   "S100A9", "CD200R3", # Neutrophils, Mast cells
+                   "MKI67", "TOP2A", "HLA-DRA", # Cycling, MHC-antigen presenting
+                   "PPBP"
+                   )
+
+FeaturePlot(seurat_obj,
+            features = lineage_genes,
+            #split.by = "tissue",
+            #order = T,
+            pt.size = 0.25,
+            ncol = 5)
+
+VlnPlot(
+  seurat_obj,
+  features = lineage_genes,
+  cols = color_palette, 
+  pt.size = 0, 
+  ncol = 5)
+```
+
+
+
+# Annotation
+According to the previous cell-type identities enriched in several gene markers, we will establish the following annotation:
+
+```{r}
+seurat_obj <- RenameIdents(
+  seurat_obj,
+ "0" = "T-NK cells",
+ "1" = "Myeloid cells",
+ "2" = "Myeloid cells",
+ "3" = "B Lymphocytes", # B cells
+ "4" = "Mixed cells", # Plasma cells & proliferating cells
+ "5" = "Granulocytes",  # B cells
+ "6" = "Platelet complexes",
+ "7" = "Myeloid cells", # pDCs
+ "8" = "Low quality cells"
+)
+
+# Creating new annotation variable
+seurat_obj$annot_level1 <- as.character(seurat_obj@active.ident)
+Idents(seurat_obj) <- "annot_level1"
+
+# Exploring number of celltypes
+table(seurat_obj$annot_level1)
+```
+
+
+## UMAP celltypes
+```{r fig.width=14, fig.height=10}
+# Clustering overview
+gg_umap_clustering_annot <- DimPlot(object = seurat_obj,
+        group.by = "annot_level1",
+        label = TRUE,
+        label.size = 5,
+        cols = color_palette
+        ) +
+  labs(title = "Level 1")
+gg_umap_clustering_annot
+
+ggsave(filename = paste0(path_r_figs, "/CLARIAJOA_clustering_level1_annotation_umap.png"),
+       plot = gg_umap_clustering_annot)
+```
+
+
+Now, we will also explore clusters across therapy
+```{r fig.width=15, fig.height=5}
+DimPlot(
+  object = seurat_obj,
+  group.by = "annot_level1",
+  split.by = "disease_grade",
+  raster = FALSE,
+  label = FALSE,
+  cols = color_palette
+  ) + NoLegend()
+```
+
+
+
+## Cell proportions
+```{r fig.width=14, fig.height=6}
+gg_cell_num <- dittoBarPlot(seurat_obj, 
+                            "annot_level1",
+                            group.by = "disease_grade_treatment_patient",
+                            scale = "count",
+                            legend.show = FALSE,
+                            #retain.factor.levels = TRUE,
+                            color.panel = color_palette)
+
+gg_cell_prop <- dittoBarPlot(seurat_obj, 
+                             "annot_level1",
+                             group.by = "disease_grade_treatment_patient",
+                             scale = "percent",
+                            #retain.factor.levels = TRUE,
+                             color.panel = color_palette)
+
+gg_cell_num + gg_cell_prop
+```
+
+
+```{r fig.width=15, fig.height=6}
+gg_cell_num <- dittoBarPlot(seurat_obj, 
+                            "annot_level1",
+                            group.by = "disease_grade_treatment",
+                            scale = "count",
+                            legend.show = FALSE,
+                            #retain.factor.levels = TRUE,
+                            color.panel = color_palette)
+
+gg_cell_prop <- dittoBarPlot(seurat_obj, 
+                             "annot_level1",
+                             group.by = "disease_grade_treatment",
+                             scale = "percent",
+                            #retain.factor.levels = TRUE,
+                             color.panel = color_palette)
+
+gg_cell_num + gg_cell_prop
+```
+
+## Save Seurat object
+```{r}
+# Save lineage annotations
+saveRDS(seurat_obj$annot_level1, paste0(path_r_objects, "/CLARIAJOA_annotation_level1.rds"))
+
+# Save processed lognorm Seurat object
+saveRDS(seurat_obj, paste0(path_r_objects, "/CLARIAJOA_clustering_level1_annotation.rds"))
+#seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_clustering_level1_annotation.rds"))
+```
+
+
+# Generate Seurat objects (by cell lineage)
+## Split object by cell lineage
+```{r}
+# Preserving only metadata of interest
+seurat_metadata_variables <- c(names(seurat_obj@meta.data[1:38]), "annot_level1")
+seurat_obj@meta.data <- seurat_obj@meta.data[seurat_metadata_variables]
+```
+
+## Save Seurat objects
+```{r}
+# Mono/macro/DCs
+seurat_obj_myeloid <- subset(seurat_obj, idents = "Myeloid cells")
+saveRDS(seurat_obj_myeloid, paste0(path_r_objects, "/CLARIAJOA_clustering_level1_myeloidcells.rds"))
+rm(seurat_obj_myeloid)
+
+# B Lymphocytes
+seurat_obj_blymphocytes<- subset(seurat_obj, idents = "B Lymphocytes")
+saveRDS(seurat_obj_blymphocytes, paste0(path_r_objects, "/CLARIAJOA_clustering_level1_Blymphocytes.rds"))
+rm(seurat_obj_blymphocytes)
+
+# T + NK cells
+seurat_obj_TNKcells <- subset(seurat_obj, idents = "T-NK cells")
+saveRDS(seurat_obj_TNKcells, paste0(path_r_objects, "/CLARIAJOA_clustering_level1_TNKcells.rds"))
+rm(seurat_obj_TNKcells)
+
+# Mixed cells
+seurat_obj_other <- subset(seurat_obj, idents = "Mixed cells")
+saveRDS(seurat_obj_other, paste0(path_r_objects, "/CLARIAJOA_clustering_level1_mixedcells.rds"))
+rm(seurat_obj_other)
+
+# Not subclutering: Low quality cells (will be removed), platelet complexes & granulocytes!
+```
+
+
+# Session Info
+```{r}
+sessionInfo()
+```

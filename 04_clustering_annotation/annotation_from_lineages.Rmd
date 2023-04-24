@@ -1,0 +1,813 @@
+---
+title: "Annotation from lineages"
+author: "Laura Jiménez Gracia"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+```
+
+# Introduction
+
+## Objective
+In this Rmarkdown document, we are going to merge cell type identities annotated by independent cell-lineage analysis into a single one.
+
+# Pre-processing
+## Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(Seurat)
+library(DT)
+library(grid)
+library(RColorBrewer)
+library(scales)
+library(gtable)
+```
+
+## Parameters
+Here we will define and load objects and functions that will be used throughout the document.
+```{r}
+# Paths
+path_project_metadata <- here::here("01_cellranger_mapping/data/CLARIAJOA_metadata.csv")
+
+path_r_objects <- here::here("04_clustering_annotation/results/R_objects")
+path_r_figs <- here::here("04_clustering_annotation/results/figs")
+path_r_tables <- here::here("04_clustering_annotation/results/tables")
+
+# Functions
+source(here::here("bin/utils.R"))
+`%ni%` <- Negate(`%in%`)
+
+confounder_variables <- c("library_name", "hashing", "patient", "treatment", "disease_grade", "gender")
+confounder_names <- c("Library", "Hashing", "Patient", "Treatment", "Disease", "Gender")
+qc_metrics <-  c("nCount_RNA", "nFeature_RNA", "pct_mt", "pct_rb", "S.Score", "G2M.Score")
+
+# Color palette
+color_palette <- Polychrome::createPalette(60, c("#fc6060", "#74f774", "#7c7cfc"))
+names(color_palette) <- NULL
+#Polychrome::swatch(color_palette)
+```
+
+## Load data
+The data used in this Rmarkdown document comes from **CLARIAJOA** dataset.
+```{r}
+# Load all metadata information
+metadata <- read.csv(path_project_metadata)
+metadata <- metadata %>% filter(type == "cDNA")
+print("Libraries metadata")
+DT::datatable(metadata, options = list(scrollX = TRUE))
+```
+
+
+```{r}
+# Load Seurat object -- ANNOT LEVEL 1
+seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_clustering_level1_annotation.rds"))
+
+# Diet Seurat object
+seurat_obj <- DietSeurat(
+  seurat_obj,
+  counts = TRUE,
+  data = TRUE,
+  scale.data = FALSE,
+  assays = "RNA",
+  dimreducs = c("pca", "umap", "harmony"),
+  graphs = c("RNA_nn", "RNA_snn"))
+
+# Preserving only metadata of interest
+seurat_metadata_variables <- c(names(seurat_obj@meta.data[1:38]), "annot_level1")
+seurat_obj@meta.data <- seurat_obj@meta.data[seurat_metadata_variables]
+
+seurat_obj
+```
+
+
+# Add cell-types identity
+
+## Level 1
+```{r}
+table(seurat_obj$annot_level1)
+```
+
+## Level 2
+```{r}
+annotations_full <- data.frame(annot_level1 = character(),
+                               annot_level2 = character()
+)
+
+level1_list <- c("Myeloid cells", "T-NK cells", "B Lymphocytes", "Mixed cells")
+level1_filenames <- c("myeloidcells", "TNKcells", "Blymphocytes", "mixedcells")
+
+# Load & add annotations & merge all together
+for (i in 1:length(level1_list)) {
+  annot1 <- level1_list[i]
+  filename <- level1_filenames[i]
+  file_path <- paste0(path_r_objects, "/CLARIAJOA_", filename, "_annotation_level2.rds")
+  # loading annotations
+  annot <- readRDS(file_path)
+  # adding annot_level2 labels
+  annotations_full <- rbind(annotations_full, annot)
+}
+
+
+# Add metadata to seurat object
+annotations_full <- annotations_full["annot_level2"]
+seurat_obj <- AddMetaData(seurat_obj, metadata = annotations_full)
+
+# Replace NA's by level1
+seurat_obj$annot_level2[is.na(seurat_obj$annot_level2)] <- seurat_obj$annot_level1[is.na(seurat_obj$annot_level2)]
+
+table(seurat_obj$annot_level2)
+length(unique(seurat_obj$annot_level2))
+```
+
+
+## Level 3
+```{r}
+annotations_full <- data.frame(annot_level1 = factor(),
+                               annot_level2 = factor(),
+                               annot_level3 = factor()
+)
+
+lineage_list <- list("Myeloid cells", "B Lymphocytes", "CD4+ T cells", "CD8+ T cells", "NK cells")
+lineage_filenames <- c("myeloidcells", "Blymphocytes", "CD4Tcells", "CD8Tcells", "NKcells")
+
+# Load & add annotations & merge all together
+for (i in 1:length(lineage_list)) {
+  lineage <- lineage_list[[i]]
+  filename <- lineage_filenames[i]
+  file_path <- paste0(path_r_objects, "/CLARIAJOA_", filename, "_annotation_level3.rds")
+  # loading annotations
+  annot <- readRDS(file_path)
+  # adding annot_level3 labels
+  annotations_full <- rbind(annotations_full, annot)
+}
+
+# Add metadata to seurat object
+annotations_full <- annotations_full["annot_level3"]
+seurat_obj <- AddMetaData(seurat_obj, metadata = annotations_full)
+
+# Replace level3 NA by level2 values
+#seurat_obj$annot_level3 <- as.factor(seurat_obj$annot_level3)
+seurat_obj$annot_level3[is.na(seurat_obj$annot_level3)] <- seurat_obj$annot_level2[is.na(seurat_obj$annot_level3)]
+
+table(seurat_obj$annot_level3)
+length(unique(seurat_obj$annot_level3))
+```
+
+
+## Level 4
+```{r}
+annotations_full <- data.frame(annot_level1 = factor(),
+                               annot_level2 = factor(),
+                               annot_level3 = factor(),
+                               annot_level3 = factor()
+)
+
+lineage_list <- list("CD4+ T cells", "CD8+ T cells", "NK cells")
+lineage_filenames <- c("CD4Tcells", "CD8Tcells", "NKcells")
+
+# Load & add annotations & merge all together
+for (i in 1:length(lineage_list)) {
+  lineage <- lineage_list[[i]]
+  filename <- lineage_filenames[i]
+  file_path <- paste0(path_r_objects, "/CLARIAJOA_", filename, "_annotation_level4.rds")
+  # loading annotations
+  annot <- readRDS(file_path)
+  # adding annot_level3 labels
+  annotations_full <- rbind(annotations_full, annot)
+}
+
+# Add metadata to seurat object
+annotations_full <- annotations_full["annot_level4"]
+seurat_obj <- AddMetaData(seurat_obj, metadata = annotations_full)
+
+# Replace level3 NA by level2 values
+#seurat_obj$annot_level3 <- as.factor(seurat_obj$annot_level3)
+seurat_obj$annot_level4[is.na(seurat_obj$annot_level4)] <- seurat_obj$annot_level3[is.na(seurat_obj$annot_level4)]
+
+table(seurat_obj$annot_level4)
+length(unique(seurat_obj$annot_level4))
+```
+
+## CELL LINEAGES
+```{r}
+seurat_obj$cell_lineages <- as.character(seurat_obj$annot_level4)
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "Naive B cells", "Activated Naive B cells", "Activated B cells", "Unswitched Memory B cells", "Switched Memory B cells", 
+  "Transitional 1 B cells", "Transitional 2 B cells",
+  "CD19hiCD11c+ Memory B cells", "Plasma cells", "Plasma cells cycling")] <- "B Lymphocytes"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "Naive CD4+ T cells", "Central Memory CD4+ T cells", "Central Memory ITGB1+ CD4+ T cells",
+  "Effector Memory CD4+ T cells", "Activated Memory CD4+ T cells", "CD25-Foxp3+ Treg", "CD25+Foxp3+ Treg",
+  "Th1", "Th17", "Proliferative CD4+ T cells")] <- "CD4+ T cells"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "Naive CD8+ T cells", "Activated CD8+ T cells", "Central Memory CD8+ T cells", "Transitional Memory CD8+ T cells",
+  "Effector Memory CD8+ T cells", "Effector Activated CD8+ T cells", "Cytotoxic CD8+ T cells", "IFN+ CD8+ T cells",
+  "Proliferative CD8+ T cells")] <- "CD8+ T cells"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "dN HAVCR2+ T cells", "gd T cells", "MAIT cells", "Innate-like T cells", "NK-like T cells")] <- "Unconventional T cells"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "CD56bright NK cells", "CD56dim CD16+CD57- NK cells", "CD56dim CD16+CD57-CXCR4+ NK cells",
+  "CD56dim CD16+CD57+ NK cells","CD56dim CD16+CD2+ NK cells", "CD56dim CD16+IFNg+ NK cells",
+  "NK cells cycling")] <- "NK cells"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "Classical Monocytes", "Intermediate Monocytes HAVCR2+", "Intermediate Monocytes Inflammatory",
+  "Intermediate Monocytes IFN+", "Non-Classical Monocytes", "Macrophages-like Monocytes", "DC2",
+  "DC4 FCGR3B+", "pDCs", "GMP cells", "Early-MDSC", "G-MDSC", "G-MDSC CST7+")] <- "Myeloid cells"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% ("Granulocytes")] <- "Granulocytes"
+
+seurat_obj$cell_lineages[seurat_obj$annot_level4 %in% c(
+  "Platelet complexes", "Complex Platelets-B cells", "Complex Platelets-T cells", 
+  "Complex Platelets-Classical Monocytes", "Complex Platelets-Non-Classical Monocytes", "Complex Platelets-DCs")] <- "Platelet complexes"
+
+seurat_obj$cell_lineages <- as.factor(seurat_obj$cell_lineages)
+table(seurat_obj$cell_lineages)
+```
+
+## CELL TYPES
+```{r}
+seurat_obj$cell_types <- as.character(seurat_obj$annot_level4)
+seurat_obj$cell_types <- as.factor(seurat_obj$cell_types)
+table(seurat_obj$cell_types)
+```
+
+## Remove annotation slots
+```{r}
+seurat_obj$annot_level1 <- NULL
+seurat_obj$annot_level2 <- NULL
+seurat_obj$annot_level3 <- NULL
+seurat_obj$annot_level4 <- NULL
+```
+
+
+# Save data
+```{r}
+system_date <- gsub("-","",Sys.Date())
+print(system_date)
+
+system_date <- "20221102"
+```
+
+## Full dataset
+```{r}
+# Save metadata
+saveRDS(seurat_obj@meta.data, paste0(path_r_objects, "/CLARIAJOA_metadata_full_", system_date, ".rds"))
+openxlsx::write.xlsx(seurat_obj@meta.data, paste0(path_r_tables, "/CLARIAJOA_metadata_full_", system_date, ".xlsx"))
+
+# Save annotated Seurat object
+saveRDS(seurat_obj, paste0(path_r_objects, "/CLARIAJOA_clustering_annotation_full_", system_date, ".rds"))
+#seurat_obj <- readRDS(paste0(path_r_objects, "/CLARIAJOA_clustering_annotation_full_20221102.rds"))
+```
+
+## Remove uninteresting cells
+```{r}
+Idents(seurat_obj) <- "cell_lineages"
+cells_to_remove <- c("Doublets", "Low quality cells", "Platelet complexes")
+seurat_obj_cleaned <- subset(seurat_obj, idents = cells_to_remove, invert = TRUE)
+
+seurat_obj_cleaned$cell_lineages <- as.factor(as.character(seurat_obj_cleaned$cell_lineages))
+seurat_obj_cleaned$cell_types <- as.factor(as.character(seurat_obj_cleaned$cell_types))
+
+seurat_obj_cleaned
+table(seurat_obj_cleaned$cell_types)
+length(unique(seurat_obj_cleaned$cell_types))
+rm(seurat_obj)
+```
+
+```{r}
+# Reordering condition
+seurat_obj_cleaned$disease_grade <- factor(x = seurat_obj_cleaned$disease_grade,
+                                        levels = c(
+                                        "Healthy",
+                                        "AD",
+                                        "ACLFg1",
+                                        "ACLFg2",
+                                        "ACLFg3"
+                                        ))
+
+seurat_obj_cleaned$disease_grade_treatment <- factor(x = seurat_obj_cleaned$disease_grade_treatment,
+                                        levels = c(
+                                        "Healthy_vehicle",
+                                        "AD_vehicle",
+                                        "ACLFg1_vehicle",
+                                        "ACLFg2_vehicle",
+                                        "ACLFg3_vehicle",
+                                        "Healthy_HSA",
+                                        "AD_HSA",
+                                        "ACLFg1_HSA",
+                                        "ACLFg2_HSA",
+                                        "ACLFg3_HSA"
+                                        ))
+
+# Reordering lineages
+seurat_obj_cleaned$cell_lineages <- factor(x = seurat_obj_cleaned$cell_lineages,
+                                        levels = c(
+                                        "B Lymphocytes",
+                                        "Myeloid cells",
+                                        "Granulocytes",
+                                        "CD4+ T cells",
+                                        "CD8+ T cells",
+                                        "Unconventional T cells",
+                                        "NK cells"
+                                        ))
+
+# Reordering cells
+seurat_obj_cleaned$cell_types <- factor(x = seurat_obj_cleaned$cell_types,
+                                        levels = c(
+                                        # B Lymphocytes
+                                        "Transitional 1 B cells",
+                                        "Transitional 2 B cells",
+                                        "Naive B cells",
+                                        "Activated Naive B cells",
+                                        "Activated B cells",
+                                        "Unswitched Memory B cells",
+                                        "Switched Memory B cells",
+                                        "CD19hiCD11c+ Memory B cells",
+                                        "Plasma cells",
+                                        "Plasma cells cycling",
+                                         # Myeloid cells
+                                        "Classical Monocytes",
+                                        "Intermediate Monocytes HAVCR2+",
+                                        "Intermediate Monocytes Inflammatory",
+                                        "Intermediate Monocytes IFN+",
+                                        "Non-Classical Monocytes",
+                                        "Macrophages-like Monocytes",
+                                        "DC2",
+                                        "DC4 FCGR3B+",
+                                        "pDCs",
+                                        "GMP cells",
+                                        "Early-MDSC",
+                                        "G-MDSC",
+                                        "G-MDSC CST7+",
+                                        "Granulocytes",
+                                        # CD4+ T cells
+                                        "Naive CD4+ T cells",
+                                        "Central Memory CD4+ T cells",
+                                        "Central Memory ITGB1+ CD4+ T cells",
+                                        "Effector Memory CD4+ T cells",
+                                        "Activated Memory CD4+ T cells",
+                                        "CD25-Foxp3+ Treg",
+                                        "CD25+Foxp3+ Treg",
+                                        "Th1",
+                                        "Th17",
+                                        "Proliferative CD4+ T cells",
+                                        # CD8+ T cells
+                                        "Naive CD8+ T cells",
+                                        "Activated CD8+ T cells",
+                                        "Central Memory CD8+ T cells",
+                                        "Transitional Memory CD8+ T cells",
+                                        "Effector Memory CD8+ T cells",
+                                        "Effector Activated CD8+ T cells",
+                                        "Cytotoxic CD8+ T cells",
+                                        "IFN+ CD8+ T cells",
+                                        "Proliferative CD8+ T cells",
+                                        # Unconventional T cells
+                                        "dN HAVCR2+ T cells",
+                                        "gd T cells",
+                                        "MAIT cells",
+                                        "Innate-like T cells",
+                                        "NK-like T cells",
+                                        # NK cells
+                                        "CD56bright NK cells",
+                                        "CD56dim CD16+CD57- NK cells",
+                                        "CD56dim CD16+CD57-CXCR4+ NK cells",
+                                        "CD56dim CD16+CD57+ NK cells", 
+                                        "CD56dim CD16+CD2+ NK cells",
+                                        "CD56dim CD16+IFNg+ NK cells",
+                                        "NK cells cycling"
+                                        # Platelets
+                                        #"Platelet complexes",
+                                        #"Complex Platelets-B cells",
+                                        #"Complex Platelets-T cells",
+                                        #"Complex Platelets-Classical Monocytes",
+                                        #"Complex Platelets-Non-Classical Monocytes",
+                                        #"Complex Platelets-DCs"
+                                        ))
+```
+
+## Cleaned dataset
+```{r}
+# Save metadata
+saveRDS(seurat_obj_cleaned@meta.data, paste0(path_r_objects, "/CLARIAJOA_metadata_cleaned_", system_date, ".rds"))
+openxlsx::write.xlsx(seurat_obj_cleaned@meta.data, paste0(path_r_tables, "/CLARIAJOA_metadata_cleaned_", system_date, ".xlsx"))
+
+# Save annotated Seurat object
+saveRDS(seurat_obj_cleaned, paste0(path_r_objects, "/CLARIAJOA_clustering_annotation_cleaned_", system_date, ".rds"))
+#seurat_obj_cleaned <- readRDS(paste0(path_r_objects, "/CLARIAJOA_clustering_annotation_cleaned_", system_date, ".rds"))
+```
+
+
+# Data visualization
+```{r}
+# Assign lineages colors
+lineages_color_palette <- c("B Lymphocytes" = "#F94144",
+                            "Myeloid cells" = "#90BE6D",
+                            "Granulocytes" = "#132A13",
+                            "CD4+ T cells" = "#277DA1",
+                            "CD8+ T cells" = "#F9C74F",
+                            "Unconventional T cells" = "#9F86C0",
+                            "NK cells" = "#F9844A"
+)
+
+# Assign cell-types colors
+cells_color_palette <- c( # B cells
+                          "Transitional 1 B cells" = "#fa788b",
+                          "Transitional 2 B cells" = "#641220",
+                          "Naive B cells" = "#641220",
+                          "Activated Naive B cells" = "#825a5f",
+                          "Activated B cells" = "#E01E37",
+                          "Unswitched Memory B cells" = "#59010f",
+                          "Switched Memory B cells" = "#85182A",
+                          "CD19hiCD11c+ Memory B cells" = "#A71E34",
+                          "Plasma cells" = "#E5383B",
+                          "Plasma cells cycling" = "#BF4342",
+                          # Myeloid
+                          "Classical Monocytes" = "#52B788",
+                          "Intermediate Monocytes HAVCR2+" = "#1B4332",
+                          "Intermediate Monocytes Inflammatory" = "#2D6A4F",
+                          "Intermediate Monocytes IFN+" = "#40916C",
+                          "Non-Classical Monocytes" = "#081C15",
+                          "Macrophages-like Monocytes" = "#D8F3DC",
+                          "DC2" = "#31572C",
+                          "DC4 FCGR3B+" = "#4F772D",
+                          "pDCs" = "#90A955",
+                          "GMP cells" = "#3E5219",
+                          "Early-MDSC" = "#2B9348",
+                          "G-MDSC" = "#80B918",
+                          "G-MDSC CST7+" = "#007F5F",
+                          "Granulocytes" = "#132A13",
+                          # CD4+ T cells
+                          "Naive CD4+ T cells" = "#64B5F6",
+                          "Central Memory CD4+ T cells" = "#1976D2",
+                          "Central Memory ITGB1+ CD4+ T cells" = "#2196F3",
+                          "Effector Memory CD4+ T cells" = "#0D47A1",
+                          "Activated Memory CD4+ T cells" = "#BBDEFB",
+                          "CD25-Foxp3+ Treg" = "#788BFF",
+                          "CD25+Foxp3+ Treg" = "#5465FF",
+                          "Th1" = "#E2FDFF",
+                          "Th17" = "#BFD7FF",
+                          "Proliferative CD4+ T cells" = "#9BB1FF",
+                          # CD8+ T cells
+                          "Naive CD8+ T cells" = "#583101",
+                          "Activated CD8+ T cells" = "#A47148",
+                          "Central Memory CD8+ T cells" = "#6F4518",
+                          "Transitional Memory CD8+ T cells" = "#8B5E34",
+                          "Effector Memory CD8+ T cells" = "#BC8A5F",
+                          "Effector Activated CD8+ T cells" = "#D4A276",
+                          "Cytotoxic CD8+ T cells" = "#C36F09",
+                          "IFN+ CD8+ T cells" = "#F4E409",
+                          "Proliferative CD8+ T cells" = "#EEBA0B",
+                          # Unconventional T cells
+                          "dN HAVCR2+ T cells" = "#FF4800",
+                          "gd T cells" = "#FF6000",
+                          "MAIT cells" = "#FF7900",
+                          "Innate-like T cells" = "#FF9100",
+                          "NK-like T cells" = "#FFAA00",
+                          # NK cells
+                          "CD56bright NK cells" = "#10002B",
+                          "CD56dim CD16+CD57- NK cells" = "#240046",
+                          "CD56dim CD16+CD57-CXCR4+ NK cells" = "#E0AAFF",
+                          "CD56dim CD16+CD57+ NK cells" = "#7B2CBF", 
+                          "CD56dim CD16+CD2+ NK cells" = "#9D4EDD",
+                          "CD56dim CD16+IFNg+ NK cells" = "#C77DFF",
+                          "NK cells cycling" = "#5A189A"
+                          )
+```
+
+## UMAP colors
+### Lineages
+```{r fig.width=16, fig.height=12}
+# Clustering overview
+gg_umap_clustering_cellsubtypes_cleaned <- DimPlot(object = seurat_obj_cleaned,
+        group.by = "cell_lineages",
+        label = FALSE,
+        cols = lineages_color_palette,
+        raster = FALSE,
+        shuffle = TRUE,
+        pt.size = 1
+        ) +
+  guides(color = guide_legend(override.aes = list(size = 5), ncol = 1)) +
+  labs(title="Cell lineages - Cleaned")
+gg_umap_clustering_cellsubtypes_cleaned
+
+ggsave(filename = paste0(path_r_figs, "/CLARIAJOA_clustering_annotationlineages_cleaned_umap_", system_date, ".png"),
+       plot = gg_umap_clustering_cellsubtypes_cleaned)
+```
+
+
+###  Cell-types
+```{r fig.width=20, fig.height=12}
+# Clustering overview
+gg_umap_clustering_cellsubtypes_cleaned <- DimPlot(object = seurat_obj_cleaned,
+        group.by = "cell_types",
+        label = FALSE,
+        cols = cells_color_palette,
+        raster = FALSE,
+        shuffle = TRUE,
+        pt.size = 1
+        ) +
+  guides(color = guide_legend(override.aes = list(size = 5), ncol = 2)) +
+  labs(title="Celltypes - Cleaned")
+gg_umap_clustering_cellsubtypes_cleaned
+
+ggsave(filename = paste0(path_r_figs, "/CLARIAJOA_clustering_annotationcells_cleaned_umap_", system_date, ".png"),
+       plot = gg_umap_clustering_cellsubtypes_cleaned)
+```
+
+###  Lineages by Disease_grade
+```{r fig.width=25, fig.height=5}
+# Clustering overview
+gg_umap_clustering_cellsubtypes_cleaned <- DimPlot(object = seurat_obj_cleaned,
+        group.by = "cell_lineages",
+        split.by = "disease_grade",
+        label = FALSE,
+        cols = lineages_color_palette,
+        raster = FALSE,
+        pt.size = 0.25,
+        ncol = 5
+        ) +
+  guides(color = guide_legend(override.aes = list(size = 5), ncol = 1))
+gg_umap_clustering_cellsubtypes_cleaned
+
+ggsave(filename = paste0(path_r_figs, "/CLARIAJOA_split-DG_cleaned_umap_", system_date, ".png"),
+       plot = gg_umap_clustering_cellsubtypes_cleaned)
+```
+
+```{r fig.width=25, fig.height=10}
+# Clustering overview
+gg_umap_clustering_cellsubtypes_cleaned <- DimPlot(object = seurat_obj_cleaned,
+        group.by = "cell_lineages",
+        split.by = "disease_grade_treatment",
+        label = FALSE,
+        cols = lineages_color_palette,
+        raster = FALSE,
+        pt.size = 0.25,
+        ncol = 5
+        ) +
+  guides(color = guide_legend(override.aes = list(size = 5), ncol = 1))
+gg_umap_clustering_cellsubtypes_cleaned
+
+ggsave(filename = paste0(path_r_figs, "/CLARIAJOA_split-DGT_cleaned_umap_", system_date, ".png"),
+       plot = gg_umap_clustering_cellsubtypes_cleaned)
+```
+
+
+# Celullar proportions
+## Lineages
+```{r fig.width=15, fig.height=6}
+gg_cell_num <- dittoSeq::dittoBarPlot(seurat_obj_cleaned, 
+                            "cell_lineages",
+                            group.by = "disease_grade_treatment",
+                            scale = "count",
+                            legend.show = FALSE,
+                            retain.factor.levels = TRUE,
+                            color.panel = lineages_color_palette)
+
+gg_cell_prop <- dittoSeq::dittoBarPlot(seurat_obj_cleaned, 
+                             "cell_lineages",
+                             group.by = "disease_grade_treatment",
+                             scale = "percent",
+                            retain.factor.levels = TRUE,
+                             color.panel = lineages_color_palette)
+
+gg_cell_num + gg_cell_prop
+```
+
+## Cell-types
+```{r fig.width=15, fig.height=6}
+dittoSeq::dittoBarPlot(seurat_obj_cleaned, 
+                            "cell_types",
+                            group.by = "disease_grade_treatment",
+                            scale = "count",
+                            #legend.show = FALSE,
+                            retain.factor.levels = TRUE,
+                            color.panel = cells_color_palette)
+
+dittoSeq::dittoBarPlot(seurat_obj_cleaned, 
+                             "cell_types",
+                             group.by = "disease_grade_treatment",
+                             scale = "percent",
+                            retain.factor.levels = TRUE,
+                             color.panel = cells_color_palette)
+```
+
+# Gene markers plot
+```{r}
+# Gene markers for clusters
+# TOP 5 (for subsets) --> reduced to TOP 2 (for whole dataset)
+lineages_gene_markers <- c(
+  "CD79A", "CD79B",	"MS4A1", "JCHAIN", ## B Lymphocytes
+  "CD14",	"LYZ", "FCER1A", "FCGR3B", ## Myeloid cells
+  "GATA2",	"RGS2", # Granulocytes
+  "CD3E",	"CD3D",	"CD4", ## CD4+ CELLS	
+  "CD8A", "CD8B", ## CD8+ CELLS		
+  "SELL", "PASK","KLRB1",
+  "NCAM1",	"FCGR3A", "KLRB1" ## NK cells		
+)
+
+cells_gene_markers <- c(
+  "CD79A", "CD79B",	"CD19",	"MS4A1", ## B Lymphocytes
+  "TCL1A",	"VPREB3",	"LTB",	"FCRL5",
+  "IGHD",	"IGHM",	"SELL",	"CCR7",
+  "CD69",	"CD83",	"MYC",	"HLA-DQA1",
+  "CD27", "S100A10",	"SSPN",
+  "ITGAX",	"HLA-DPA1", "CD38",
+  "JCHAIN", "IGHG1",	"XBP1",
+
+  "CD14",	"LYZ"	,"FCGR3A", ## Myeloid cells
+  "VCAN",	"EREG",
+  "HAVCR2",	"HLA-DRA",	"HLA-DPA1",
+  "CCL3",	"IL1B",	"TNF",	"CXCL2",
+  "ISG15",	"IFIT2",	"IFIT3",	"STAT1",
+  "MS4A7",	"LST1",
+  "C1QA",	"SELENOP",	"MRC1",	"CD163",
+  "FCER1A",	"IL7R",	"CLEC10A",
+  "FCGR3B",	"CSF3R",	"IFITM2",
+  "JCHAIN",	"IL3RA",	"IRF8",
+  "DEFA3",	"DEFA4",	"MS4A3",	"RETN",
+  "MMP9",	"LCN2",	"S100A12",
+  "CST7",
+  "GATA2",	"RGS2", # Granulocytes
+  
+  "CD3E",	"CD3D",	"CD4", ## CD4+ CELLS	
+  "SELL",	"CCR7",	"LEF1",	"TCF7",
+  "IL7R",	"PASK",		
+  "ITGB1",	"LGALS1",	"ANXA1",	
+  "KLRB1",	"MAF",	"S100A4", "IL32",
+  "CD69",	"DUSP4",	"CREM",	
+  "FOXP3",	"DUSP",	"CTLA4",	
+  "IL2RA",	"BATF",	"TIGIT",	
+  "CCL5",	"CXCR5",	"TBX21",	
+  "CCR6",	"RORC",		
+
+  "CD8A", "CD8B", ## CD8+ CELLS		
+  "SELL",	"CCR7",	"LEF1",	"TCF7",
+  "CD69",	"DUSP4", "CREM",
+  "IL7R",	"PASK",		
+  "ZEB2",			
+  "KLRB1",	"MAF",	"S100A4",	"IL32",
+  "DUSP2",	"RGS1",	"GZMK",	
+  "ISG15",	"IFIT2",	"IFIT3",	"STAT1",
+  "GLYN",	"CCL5",	"NKG7",	
+  
+  "HAVCR2",	"GZMK",	"ACTG1",	
+  "TRDC",	"TRGC1",	"KLRC1",	
+  "KLRB1",	"IL7R",	"CCR6",	"GZMK",
+  "FCER1G",	"TCR",	"TSHZ2",
+  "FCGR3A",	"GNLY",	"KLRD1",	
+  
+  "NCAM1",	"FCGR3A", "KLRB1", ## NK cells		
+  "GPR183",	"IL7R",	"XCL1",	"XCL2",
+  "GZMK",	"VIM",	"MT2A",
+  "CXCR4",	"NFKBIA",		
+  "B3GAT1",	"CX3CR1",		
+  "CD2",
+  "IFNG",	"CCL3",	"CCL4",	
+
+  "STMN1",	"TOP2A",	"MKI67"	
+)
+
+lineages_gene_markers <- lineages_gene_markers[!duplicated(lineages_gene_markers)]
+cells_gene_markers <- cells_gene_markers[!duplicated(cells_gene_markers)]
+```
+
+
+### Lineages
+
+```{r fig.width=12, fig.height=6}
+dotplot_lineages <- DotPlot(seurat_obj_cleaned,
+        features = lineages_gene_markers,
+        group.by = "cell_lineages",
+        #scale = TRUE,
+        #col.max = 3,
+        #col.min = 0,
+        cols = "RdYlBu",
+        dot.scale = 10) +
+  #coord_flip() +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust = 0.5))
+
+dotplot_lineages
+```
+
+```{r fig.width=10, fig.height=15}
+avgexpr_mat <- AverageExpression(
+  features = lineages_gene_markers,
+  seurat_obj_cleaned,
+  assays = "RNA",
+  return.seurat = F,
+  group.by = "cell_lineages",
+  slot = "counts")
+
+cell_types <- names(table(seurat_obj_cleaned$cell_lineages))
+mycolors <- list(cell_type = lineages_color_palette)
+mat <- as.data.frame(avgexpr_mat$RNA)
+colnames(mat) <- cell_types
+annotation_col = data.frame(
+                    cell_type = cell_types) 
+rownames(annotation_col) <- cell_types
+
+input_mat <- t(apply(mat, MARGIN = 1, FUN = function(X) (X - min(X))/diff(range(X))))
+```
+
+
+```{r fig.width=4, fig.height=8}
+#pdf(paste(figures_folder, "M6B_reduced_genes_heatmap.pdf", sep=""),width=5,height=7,paper='special') 
+pheatmap2::pheatmap2(input_mat,
+                annotation_col = annotation_col,
+                annotation_colors = mycolors,
+                annotation_names_col = F,
+                annotation_legend = F,
+                show_rownames=T, show_colnames = F, 
+                border_color = NA,
+                cluster_rows = F,
+                cluster_cols = F,
+                fontsize_row = 6,
+                gaps_row = c(4,8,10,17), 
+                gaps_col = c(1,3,6) 
+)
+
+grid::grid.ls(grid.force()) # "col_annotation" looks like it's the one to edit
+#grid::grid.gedit("annotation_col", gp = gpar(col="black"))
+#dev.off()
+```
+
+
+
+### Cell-types
+
+```{r fig.width=25, fig.height=12}
+dotplot_cells <- DotPlot(seurat_obj_cleaned,
+        features = cells_gene_markers,
+        group.by = "cell_types",
+        #scale = TRUE,
+        #col.max = 3,
+        #col.min = 0,
+        cols = "RdYlBu",
+        dot.scale = 5) +
+  #coord_flip() +
+  theme(axis.text.x = element_text(angle=90, hjust = 1, vjust = 0.5))
+
+dotplot_cells
+```
+
+
+```{r fig.width=10, fig.height=15}
+avgexpr_mat <- AverageExpression(
+  features = cells_gene_markers,
+  seurat_obj_cleaned,
+  assays = "RNA",
+  return.seurat = F,
+  group.by = "cell_types",
+  slot = "counts")
+
+cell_types <- names(table(seurat_obj_cleaned$cell_types))
+mycolors <- list(cell_type = cells_color_palette)
+mat <- as.data.frame(avgexpr_mat$RNA)
+colnames(mat) <- cell_types
+annotation_col = data.frame(
+                    cell_type = cell_types) 
+rownames(annotation_col) <- cell_types
+
+input_mat <- t(apply(mat, MARGIN = 1, FUN = function(X) (X - min(X))/diff(range(X))))
+```
+
+
+```{r fig.width=7, fig.height=12}
+#pdf(paste(figures_folder, "M6B_reduced_genes_heatmap.pdf", sep=""),width=5,height=7,paper='special') 
+pheatmap2::pheatmap2(input_mat,
+                annotation_col = annotation_col,
+                annotation_colors = mycolors,
+                annotation_names_col = F,
+                annotation_legend = F,
+                show_rownames=T, show_colnames = F, 
+                border_color = NA,
+                cluster_rows = F,
+                cluster_cols = F,
+                fontsize_row = 6,
+                gaps_row = c(25,64,89,95,104), 
+                gaps_col = c(7,21,31,38,45) 
+)
+
+grid::grid.ls(grid.force()) # "col_annotation" looks like it's the one to edit
+#grid::grid.gedit("annotation_col", gp = gpar(col="black"))
+#dev.off()
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```
