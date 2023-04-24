@@ -1,0 +1,25 @@
+project,gem_id,id,name,read,pattern,sequence,feature_type
+CLARIAJOA,wwuo2kd5_5r4olwj9,AD_vehicle,AD_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,wwuo2kd5_5r4olwj9,AD_HSA,AD_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,jrxqewr5_vsmg6n9o,ACLF_vehicle,ACLF_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,jrxqewr5_vsmg6n9o,ACLF_HSA,ACLF_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,h2vuf48a_omqtlnr6,ACLF4_vehicle,ACLF4_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,h2vuf48a_omqtlnr6,ACLF4_HSA,ACLF4_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,cdj1ynxi_c755xye4,ACLF5_vehicle,ACLF5_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,cdj1ynxi_c755xye4,ACLF5_HSA,ACLF5_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture
+CLARIAJOA,szidkerf_4h6xi41c,HD_vehicle,HD_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,szidkerf_4h6xi41c,HD_HSA,HD_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture
+CLARIAJOA,zyups13n_t8h21mg2,AD2_vehicle,AD2_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,zyups13n_t8h21mg2,AD2_HSA,AD2_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture
+CLARIAJOA,ob1nefwj_fbm83qq6,ACLF6_vehicle,ACLF6_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,ob1nefwj_fbm83qq6,ACLF6_HSA,ACLF6_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,x23nbaaw_eag2hvj1,ACLF7_vehicle,ACLF7_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,x23nbaaw_eag2hvj1,ACLF7_HSA,ACLF7_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture
+CLARIAJOA,s9auuukf_rf3yt4gi,AD3_vehicle,AD3_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,s9auuukf_rf3yt4gi,AD3_HSA,AD3_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,zdfhxhw7_9vdmolf9,ACLF8_vehicle,ACLF8_vehicle,R2,^(BC),GTCAACTCTTTAGCG,Antibody Capture
+CLARIAJOA,zdfhxhw7_9vdmolf9,ACLF8_HSA,ACLF8_HSA,R2,^(BC),TGATGGCCTATTGGG,Antibody Capture
+CLARIAJOA,z6r5gabl_yvv723gi,AD4_vehicle,AD4_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,z6r5gabl_yvv723gi,AD4_HSA,AD4_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture
+CLARIAJOA,ckggsi4n_svevepyv,HD4_vehicle,HD4_vehicle,R2,^(BC),TTCCGCCTCTCTTTG,Antibody Capture
+CLARIAJOA,ckggsi4n_svevepyv,HD4_HSA,HD4_HSA,R2,^(BC),AGTAAGTTCAGCGTA,Antibody Capture

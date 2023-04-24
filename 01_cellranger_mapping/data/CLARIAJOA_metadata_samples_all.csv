@@ -1,0 +1,17 @@
+patient,donor_id,disease,ACLF_grade,disease_grade,sampling_date,delay_ACLFonset_sampling_days,age,gender,active_alcohol_consumption,beta_blockers,ICU_outcome,white_blood_cell_count,pct_neutrophils,pct_lymphocytes,pct_monocytes,platelets,MELD,Total bilirubin (mg/dl),Creat(mg/dl),INR,Na,Hemoglobin,CRP,Albuminemia (g/l),Blood glucose level (g/l),CLIF-c ACLF score,CLIF-c OF score,Liver subscore,Kidney subscore,Coagulation subscore,Circulation subscore,Lung subscore,Cerebral subscore
+P1,D,Healthy,NA,Healthy,NA,NA,38,M,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
+P2,P,ACLF,Grade 2,ACLFg2,23.10.2019,7,44,F,Yes,No,Dead,15.78,76,8.2,11,36,32,9.1,1.9,2.65,127,72,5.15,14,218,52,12,1,1,3,3,1,3
+P3,DD,Healthy,NA,Healthy,NA,NA,45,F,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
+P4,PP,ACLF,Grade 3,ACLFg3,13.11.2019,3,62,M,Yes,No,Dead,14.11,86.9,5.2,0.2,99,40,14.1,3.18,2.77,135,82,7.7,23,75,62,13,3,2,3,2,1,2
+P5,AD,AD,AD,AD,22.11.2019,AD,51,M,Yes,No,Dead,6.28,56,25,0.2,128,NA,1.7,0.52,1.73,136,70,3,21,96,NA,NA,0,0,0,0,0,0
+P6,ACLF,ACLF,Grade 2,ACLFg2,22.11.2019,2,53,M,Yes,Yes,Alive,11,78,2,10,61,40,24.4,1,3.02,129,72,3.7,24,137,57,12,3,2,3,1,1,2
+P7,ACLF4,ACLF,Grade 1,ACLFg1,26.11.2019,5,65,M,No,Yes,Dead,5.94,58.6,19.2,0.5,97,8,19,1.95,2.4,137,78,1.6,35,82,47,9,3,1,2,1,1,1
+P8,ACLF5,ACLF,Grade 1,ACLFg1,26.11.2019,13,67,M,Yes,Yes,Alive,6.1,67.4,20.2,7.7,268,14,0.2,2.04,1.04,138,85,2.9,40,116,45,7,1,2,1,1,1,1
+P9,HD,Healthy,NA,Healthy,NA,NA,55,F,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
+P10,AD2,AD,AD,AD,28.11.2019,AD,50,F,Yes,Yes,Alive,5.33,71,22,0.16,58,5,3.9,0.59,1.8,140,94,0.6,24,78,NA,NA,0,0,0,0,0,0
+P11,ACLF6,ACLF,Grade 3,ACLFg3,23.01.2020,4,71,F,Yes,Yes,Dead,14.26,86,9,4,26,35,9.6,2.79,2.38,135,77,3.9,29,95,65,12,0,2,2,3,3,1
+P12,ACLF7,ACLF,Grade 3,ACLFg3,23.01.2020,2,69,F,Yes,Yes,Dead,16.52,83,9,1,162,33,12,2.9,1.78,139,121,10.4,22,61,56,10,2,2,1,3,1,1
+P13,AD3,ACLF,Grade 1,ACLFg1,05.02.2020,1,62,M,No,No,Alive,2.02,64.3,9,4.4,24,28,4.6,2.28,2.08,127,71,0.3,27,116,NA,NA,0,0,0,0,0,0
+P14,ACLF8,ACLF,Grade 2,ACLFg2,05.02.2020,0,49,F,Yes,No,Alive,NA,NA,NA,NA,NA,NA,NA,0.44,NA,NA,87,1.3,27,171,47,10,3,1,3,1,1,1
+P15,AD4,AD,AD,AD,06.02.2020,AD,66,M,No,No,Alive,3.69,72.3,0.4,9.3,63,8,0.3,0.97,1.16,134,118,2.32,40,47,NA,NA,0,0,0,0,0,0
+P16,HD4,Healthy,NA,Healthy,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA
