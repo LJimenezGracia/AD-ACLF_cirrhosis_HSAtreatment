@@ -21,7 +21,7 @@ The manuscript is out now at [JHEP Reports - Innovation in Hepatology EASL](http
 
 The repository is organized into the following folder tree, which contains all the necessary files and scripts to perform the detailed tasks and reproduce all our results.
 
-* **01_cellranger_mapping** --> It includes an overview of the project data information, including which samples and 10X libraries were generated. Also, it contains the scripts needed to create a folder directory to perform the sequencing read mapping to the reference genome. Finally, it includes R markdown notebooks to perform a general quality control on the raw sequencing reads from each library, considering different organism and tissue types independently.
+* **01_cellranger_mapping** --> It includes an overview of the project data information, including which samples and 10X libraries were generated. Also, it contains the scripts needed to create a folder directory to perform the sequencing read mapping to the reference genome. Finally, it includes R markdown notebooks to perform a general quality control on the raw sequencing reads from each library.
 
 * **02_demultiplexing** --> All scripts to demultiplex samples and to predict doublets for each 10x generated library. 
  
